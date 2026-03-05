@@ -63,3 +63,11 @@ def _build_field_converters():
     }
 
 FIELD_CONVERTERS = _build_field_converters()
+
+# --- Pipeline / Scheduling Configuration ---
+PIPELINE_CONFIG = {
+    # Log retention (days) — logs older than this are auto-deleted
+    "log_retention_days": 30,
+    # Default cron schedule (weekly Sunday 2 AM) — override with PIPELINE_CRON_SCHEDULE env var
+    "default_cron_schedule": "0 2 * * 0",
+}
