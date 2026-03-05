@@ -86,12 +86,16 @@ All output files are written to the `output/` directory:
 
 ## Airtable Setup
 
-1. Create a new Airtable base
-2. Create 4 tables: **Properties**, **Transactions**, **Charges**, **Parties**
-3. In each table, add fields matching the CSV column headers (all single line text is fine to start)
-4. Set `record_id` as the primary field in each table
-5. Generate a [Personal Access Token](https://airtable.com/create/tokens) with read/write access to your base
-6. Add `AIRTABLE_API_KEY` and `AIRTABLE_BASE_ID` to your `.env` file
+1. Create a new Airtable base (empty) at airtable.com
+2. Generate a [Personal Access Token](https://airtable.com/create/tokens) with `schema.bases:read`, `schema.bases:write`, `data.records:read`, and `data.records:write` scopes
+3. Add `AIRTABLE_API_KEY` and `AIRTABLE_BASE_ID` to your `.env` file
+4. Run the setup script to create all 4 tables automatically:
+
+```bash
+python setup_airtable.py
+```
+
+This creates **Properties**, **Transactions**, **Charges**, and **Parties** tables with the correct fields. It skips any tables that already exist.
 
 The sync uses upsert (insert or update) based on `record_id`, so it's safe to run repeatedly.
 
