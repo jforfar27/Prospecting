@@ -119,16 +119,19 @@ def run_scraper(args):
 
             transaction_df = get_transaction_df_from_soup(soup)
             if not transaction_df.empty:
+                transaction_df["property_record_id"] = record_id
                 transaction_df["record_id"] = [f"{record_id}-{i + 1}" for i in range(len(transaction_df))]
                 upsert_data(transaction_df, "Transaction", db_file, primary_col="record_id")
 
             parties_df = get_parties_df_from_soup(soup)
             if not parties_df.empty:
+                parties_df["property_record_id"] = record_id
                 parties_df["record_id"] = [f"{record_id}-{i + 1}" for i in range(len(parties_df))]
                 upsert_data(parties_df, "Parties", db_file, primary_col="record_id")
 
             chargees_df = get_chargees_df_from_soup(soup)
             if not chargees_df.empty:
+                chargees_df["property_record_id"] = record_id
                 chargees_df["record_id"] = [f"{record_id}-{i + 1}" for i in range(len(chargees_df))]
                 upsert_data(chargees_df, "Charges", db_file, primary_col="record_id")
 
