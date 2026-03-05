@@ -1,0 +1,23 @@
+# Output files
+output/*.db
+output/*.csv
+output/*.xlsx
+!output/.gitkeep
+
+# Environment
+.env
+__pycache__/
+*.pyc
+*.pyo
+
+# Chrome/Selenium
+chromedriver
+chromedriver.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

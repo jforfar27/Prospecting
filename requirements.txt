@@ -1,0 +1,7 @@
+pandas
+beautifulsoup4
+chrome-version
+python-dotenv
+undetected-chromedriver
+openpyxl
+pyairtable
