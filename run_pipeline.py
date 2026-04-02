@@ -409,7 +409,8 @@ Examples:
 
     # Pass-through scraper args
     parser.add_argument("--headless", action="store_true", help="Run Chrome in headless mode")
-    parser.add_argument("--resume", action="store_true", help="Resume from last scraped record")
+    parser.add_argument("--resume", action="store_true", default=True, help="Resume from last scraped record (default: on)")
+    parser.add_argument("--no-resume", dest="resume", action="store_false", help="Scrape all records from scratch")
     parser.add_argument("--type", dest="property_type", help="Override property type")
     parser.add_argument("--min-amount", help="Override minimum sale amount")
     parser.add_argument("--start-year", help="Override start year")
