@@ -158,6 +158,21 @@ def step_unit_lookup(logger):
         return False, str(e), elapsed
 
 
+def step_cmhc_estimates(logger, zone_key="zone_3"):
+    """Compute CMHC rental income and cap rate estimates."""
+    logger.info("Computing CMHC rental estimates...")
+    start = time.time()
+
+    try:
+        from cmhc_data import compute_cmhc_estimates
+        updated = compute_cmhc_estimates(config.DB_FILE, zone_key=zone_key)
+        elapsed = time.time() - start
+        return True, f"{updated} properties estimated (zone: {zone_key})", elapsed
+    except Exception as e:
+        elapsed = time.time() - start
+        return False, str(e), elapsed
+
+
 def step_sync(logger):
     """Sync CSVs to Airtable."""
     logger.info("Starting Airtable sync...")
@@ -462,12 +477,19 @@ def run_pipeline(args):
             if not ok:
                 logger.warning(f"Unit lookup had issues: {details}")
 
-        # Step 3: Airtable Sync (unless scrape-only)
+        # Step 3: CMHC rental estimates (after unit lookup)
+        if not args.sync_only:
+            ok, details, elapsed = step_cmhc_estimates(logger)
+            result.record_step("CMHC Estimates", ok, details, elapsed)
+            if not ok:
+                logger.warning(f"CMHC estimates had issues: {details}")
+
+        # Step 4: Airtable Sync (unless scrape-only)
         if not args.scrape_only:
             ok, details, elapsed = step_sync(logger)
             result.record_step("Airtable Sync", ok, details, elapsed)
 
-        # Step 4: Cleanup old logs
+        # Step 5: Cleanup old logs
         step_cleanup_logs(logger)
 
     except KeyboardInterrupt:
@@ -506,7 +528,9 @@ def main():
         if not args.sync_only:
             steps.append(f"{n}. Scrape RealTrack + export CSVs")
             n += 1
-            steps.append(f"{n}. Look up unit counts for new properties")
+            steps.append(f"{n}. Look up unit counts + market comps")
+            n += 1
+            steps.append(f"{n}. Compute CMHC rental estimates + cap rates")
             n += 1
         if not args.scrape_only:
             steps.append(f"{n}. Sync to Airtable")

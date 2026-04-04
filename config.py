@@ -52,6 +52,9 @@ def _build_field_converters():
             "market_min_ppu": parse_currency,
             "market_max_ppu": parse_currency,
             "comp_count": parse_number,
+            "estimated_monthly_rent": parse_currency,
+            "estimated_annual_income": parse_currency,
+            "estimated_noi": parse_currency,
         },
         "transaction": {
             "sale_date": parse_date,
