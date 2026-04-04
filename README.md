@@ -81,7 +81,7 @@ Unit counts are looked up from multiple sources in priority order:
 
 After unit counts are found, the tool automatically computes:
 - **$/unit** — purchase price divided by unit count
-- **CMHC zone tag** — maps each property to its CMHC survey zone (e.g. Zone 3 = Toronto Central)
+- **CMHC zone tag** — maps each property to its CMHC survey zone (e.g. `toronto_zone_3` = Toronto Central, `ottawa_zone_1` = Ottawa Centre)
 - **Market comps** — median, average, min/max $/unit from comparable sales in the same CMHC zone (last 36 months, configurable via `--comp-months`). Falls back to city then region if < 2 zone comps.
 - **% vs market** — how the property's $/unit compares to the zone median (e.g. `+15.2%` or `-8.0%`)
 
@@ -94,7 +94,7 @@ python cmhc_data.py
 python cmhc_data.py --tag
 
 # Use a different default zone for unmatched Toronto properties
-python cmhc_data.py --tag --default zone_1
+python cmhc_data.py --tag --default ottawa_zone_1
 ```
 
 The pipeline runs zone tagging, unit lookup, and market comps automatically after scraping.

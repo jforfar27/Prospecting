@@ -4,10 +4,13 @@ CMHC zone tagging — maps properties to CMHC Rental Market Survey zones.
 Tags each property with its CMHC zone based on address/neighbourhood matching.
 This enables zone-level comp analysis (comparing $/unit within the same CMHC zone).
 
+Zone keys are prefixed with the CMA name to avoid collisions across cities
+(e.g. toronto_zone_3, ottawa_zone_1).
+
 Usage:
-    python cmhc_data.py                          # show zone definitions
-    python cmhc_data.py --tag                    # tag all properties in DB
-    python cmhc_data.py --tag --default zone_3   # set default zone for unmatched Toronto properties
+    python cmhc_data.py                                     # show zone definitions
+    python cmhc_data.py --tag                               # tag all properties in DB
+    python cmhc_data.py --tag --default toronto_zone_3      # set default for unmatched Toronto properties
 """
 
 import os
@@ -20,15 +23,21 @@ import pandas as pd
 import config
 
 # ---------------------------------------------------------------------------
-# CMHC Zone Definitions — Toronto CMA
+# CMHC Zone Definitions
 # ---------------------------------------------------------------------------
-# Zones are defined by CMHC and group census tracts within the Toronto CMA.
+# Zone keys are prefixed with CMA name: "{cma}_zone_{n}"
+# This avoids collisions across CMAs (Toronto Zone 1 ≠ Ottawa Zone 1).
+#
 # Source: CMHC Housing Market Information Portal (October 2025 Survey)
-# https://www03.cmhc-schl.gc.ca/hmip-pimh/en/TableMapChart/Table?TableId=2.1.31.3&GeographyId=2270
+# Toronto: https://www03.cmhc-schl.gc.ca/hmip-pimh/en/TableMapChart/Table?TableId=2.1.31.3&GeographyId=2270
+# Ottawa:  https://www03.cmhc-schl.gc.ca/hmip-pimh/en/TableMapChart/Table?TableId=2.1.31.3&GeographyId=1265
 
-CMHC_ZONES = {
-    "zone_1": {
+# --- Toronto CMA ---
+
+TORONTO_ZONES = {
+    "toronto_zone_1": {
         "name": "Toronto Downtown",
+        "cma": "toronto",
         "description": "Downtown core, Waterfront, CityPlace, St. Lawrence, Liberty Village",
         "neighbourhoods": [
             "downtown", "waterfront", "cityplace", "st. lawrence", "liberty village",
@@ -38,8 +47,9 @@ CMHC_ZONES = {
         ],
         "address_patterns": [],
     },
-    "zone_2": {
+    "toronto_zone_2": {
         "name": "Toronto East",
+        "cma": "toronto",
         "description": "East York, Riverdale, Danforth, Beaches, Leslieville",
         "neighbourhoods": [
             "east york", "riverdale", "danforth", "the beaches", "beaches",
@@ -48,8 +58,9 @@ CMHC_ZONES = {
         ],
         "address_patterns": ["danforth", "broadview", "woodbine", "coxwell"],
     },
-    "zone_3": {
+    "toronto_zone_3": {
         "name": "Toronto Central",
+        "cma": "toronto",
         "description": "Midtown, Yonge-Eglinton, Forest Hill, Davisville, St. Clair, Rosedale",
         "neighbourhoods": [
             "midtown", "yonge-eglinton", "yonge eglinton", "forest hill",
@@ -63,8 +74,9 @@ CMHC_ZONES = {
             "mount pleasant", "avenue rd", "avenue road",
         ],
     },
-    "zone_4": {
+    "toronto_zone_4": {
         "name": "Toronto North",
+        "cma": "toronto",
         "description": "North York, Willowdale, Don Mills, Bayview Village",
         "neighbourhoods": [
             "north york", "willowdale", "don mills", "bayview village",
@@ -77,8 +89,9 @@ CMHC_ZONES = {
             "york mills",
         ],
     },
-    "zone_5": {
+    "toronto_zone_5": {
         "name": "Toronto West",
+        "cma": "toronto",
         "description": "High Park, Parkdale, Junction, Bloor West Village, Swansea",
         "neighbourhoods": [
             "high park", "parkdale", "junction", "bloor west", "swansea",
@@ -91,8 +104,9 @@ CMHC_ZONES = {
             "dundas west", "junction",
         ],
     },
-    "zone_6": {
+    "toronto_zone_6": {
         "name": "Etobicoke North",
+        "cma": "toronto",
         "description": "Rexdale, Islington, Humber, Richview, West Humber",
         "neighbourhoods": [
             "rexdale", "islington", "humber", "richview", "west humber",
@@ -101,8 +115,9 @@ CMHC_ZONES = {
         ],
         "address_patterns": ["rexdale", "islington", "kipling", "martin grove"],
     },
-    "zone_7": {
+    "toronto_zone_7": {
         "name": "Etobicoke South",
+        "cma": "toronto",
         "description": "Mimico, New Toronto, Long Branch, Lakeshore",
         "neighbourhoods": [
             "mimico", "new toronto", "long branch", "alderwood",
@@ -110,8 +125,9 @@ CMHC_ZONES = {
         ],
         "address_patterns": ["lakeshore", "lake shore", "mimico", "long branch"],
     },
-    "zone_8": {
+    "toronto_zone_8": {
         "name": "Scarborough",
+        "cma": "toronto",
         "description": "Scarborough City Centre, Agincourt, Malvern, Guildwood",
         "neighbourhoods": [
             "scarborough", "agincourt", "malvern", "guildwood",
@@ -127,45 +143,139 @@ CMHC_ZONES = {
     },
 }
 
-# Municipalities outside City of Toronto (in Toronto CMA)
-SUBURBAN_ZONES = {
-    "zone_9": {
-        "name": "Mississauga",
-        "cities": ["mississauga"],
+# Toronto CMA suburban municipalities
+TORONTO_SUBURBAN = {
+    "toronto_zone_9":  {"name": "Mississauga",        "cma": "toronto", "cities": ["mississauga"]},
+    "toronto_zone_10": {"name": "Brampton",            "cma": "toronto", "cities": ["brampton"]},
+    "toronto_zone_11": {"name": "Vaughan/Richmond Hill","cma": "toronto", "cities": ["vaughan", "richmond hill"]},
+    "toronto_zone_12": {"name": "Markham",             "cma": "toronto", "cities": ["markham"]},
+    "toronto_zone_13": {"name": "Oakville",            "cma": "toronto", "cities": ["oakville"]},
+    "toronto_zone_14": {"name": "Burlington",          "cma": "toronto", "cities": ["burlington"]},
+    "toronto_zone_15": {"name": "Oshawa/Whitby",       "cma": "toronto", "cities": ["oshawa", "whitby"]},
+    "toronto_zone_16": {"name": "Ajax/Pickering",      "cma": "toronto", "cities": ["ajax", "pickering"]},
+    "toronto_zone_17": {"name": "Milton/Halton Hills", "cma": "toronto", "cities": ["milton", "halton hills", "georgetown"]},
+}
+
+# --- Ottawa CMA ---
+
+OTTAWA_ZONES = {
+    "ottawa_zone_1": {
+        "name": "Ottawa Centre",
+        "cma": "ottawa",
+        "description": "Downtown, Centretown, Sandy Hill, Lowertown, Byward Market",
+        "neighbourhoods": [
+            "centretown", "sandy hill", "lowertown", "byward market",
+            "downtown", "golden triangle", "the glebe", "glebe",
+            "old ottawa south", "old ottawa east",
+        ],
+        "address_patterns": ["elgin", "bank st", "rideau", "laurier"],
     },
-    "zone_10": {
-        "name": "Brampton",
-        "cities": ["brampton"],
+    "ottawa_zone_2": {
+        "name": "Ottawa East",
+        "cma": "ottawa",
+        "description": "Vanier, Overbrook, Beacon Hill, Gloucester",
+        "neighbourhoods": [
+            "vanier", "overbrook", "beacon hill", "gloucester",
+            "cyrville", "pineview", "cardinal heights",
+        ],
+        "address_patterns": ["montreal rd", "montreal road", "ogilvie"],
     },
-    "zone_11": {
-        "name": "Vaughan/Richmond Hill",
-        "cities": ["vaughan", "richmond hill"],
+    "ottawa_zone_3": {
+        "name": "Ottawa West",
+        "cma": "ottawa",
+        "description": "Westboro, Hintonburg, Nepean, Bayshore, Lincoln Fields",
+        "neighbourhoods": [
+            "westboro", "hintonburg", "mechanicsville", "tunney's pasture",
+            "nepean", "bayshore", "lincoln fields", "carlingwood",
+            "britannia", "bells corners",
+        ],
+        "address_patterns": ["carling", "richmond rd", "richmond road", "scott st"],
     },
-    "zone_12": {
-        "name": "Markham",
-        "cities": ["markham"],
+    "ottawa_zone_4": {
+        "name": "Ottawa South",
+        "cma": "ottawa",
+        "description": "Alta Vista, Hunt Club, South Keys, Greenboro",
+        "neighbourhoods": [
+            "alta vista", "hunt club", "south keys", "greenboro",
+            "heron park", "riverview", "ellwood",
+        ],
+        "address_patterns": ["bank south", "hunt club", "heron"],
     },
-    "zone_13": {
-        "name": "Oakville",
-        "cities": ["oakville"],
+    "ottawa_zone_5": {
+        "name": "Kanata/Stittsville",
+        "cma": "ottawa",
+        "description": "Kanata, Stittsville, Bridlewood, Morgan's Grant",
+        "neighbourhoods": [
+            "kanata", "stittsville", "bridlewood", "morgan's grant",
+            "beaverbrook", "katimavik",
+        ],
+        "address_patterns": ["kanata", "stittsville"],
     },
-    "zone_14": {
-        "name": "Burlington",
-        "cities": ["burlington"],
+    "ottawa_zone_6": {
+        "name": "Orléans",
+        "cma": "ottawa",
+        "description": "Orléans, Fallingbrook, Avalon, Chapel Hill",
+        "neighbourhoods": [
+            "orleans", "orléans", "fallingbrook", "avalon",
+            "chapel hill", "convent glen", "queenswood heights",
+        ],
+        "address_patterns": ["orleans", "orléans", "innes"],
     },
-    "zone_15": {
-        "name": "Oshawa/Whitby",
-        "cities": ["oshawa", "whitby"],
-    },
-    "zone_16": {
-        "name": "Ajax/Pickering",
-        "cities": ["ajax", "pickering"],
-    },
-    "zone_17": {
-        "name": "Milton/Halton Hills",
-        "cities": ["milton", "halton hills", "georgetown"],
+    "ottawa_zone_7": {
+        "name": "Barrhaven",
+        "cma": "ottawa",
+        "description": "Barrhaven, Longfields, Half Moon Bay",
+        "neighbourhoods": [
+            "barrhaven", "longfields", "half moon bay",
+            "chapman mills", "stonebridge",
+        ],
+        "address_patterns": ["barrhaven", "strandherd", "fallowfield"],
     },
 }
+
+OTTAWA_SUBURBAN = {
+    "ottawa_zone_8": {"name": "Gatineau", "cma": "ottawa", "cities": ["gatineau", "hull", "aylmer"]},
+}
+
+# ---------------------------------------------------------------------------
+# Combined lookup — all CMAs
+# ---------------------------------------------------------------------------
+
+# All neighbourhood-matchable zones (City of Toronto, City of Ottawa)
+CMHC_ZONES = {**TORONTO_ZONES, **OTTAWA_ZONES}
+
+# All city-matchable suburban zones
+SUBURBAN_ZONES = {**TORONTO_SUBURBAN, **OTTAWA_SUBURBAN}
+
+# CMA detection by city name
+CMA_CITY_MAP = {
+    # Toronto CMA
+    "toronto": "toronto",
+    "east york": "toronto",
+    "north york": "toronto",
+    "york": "toronto",
+    "etobicoke": "toronto",
+    "scarborough": "toronto",
+    # Ottawa CMA
+    "ottawa": "ottawa",
+    "nepean": "ottawa",
+    "kanata": "ottawa",
+    "gloucester": "ottawa",
+    "vanier": "ottawa",
+    "orleans": "ottawa",
+    "orléans": "ottawa",
+    "barrhaven": "ottawa",
+}
+# Add suburban cities
+for zone_data in SUBURBAN_ZONES.values():
+    for city in zone_data.get("cities", []):
+        CMA_CITY_MAP[city] = zone_data["cma"]
+
+
+def _detect_cma(city):
+    """Detect which CMA a city belongs to."""
+    city_lower = (city or "").strip().lower()
+    return CMA_CITY_MAP.get(city_lower)
 
 
 # ---------------------------------------------------------------------------
@@ -177,8 +287,8 @@ def match_zone(address, city, site_description=""):
 
     Priority:
     1. Suburban municipality match (exact city)
-    2. Toronto neighbourhood match (from site_description or address)
-    3. Toronto address pattern match (street names)
+    2. Neighbourhood match (from site_description or address)
+    3. Address pattern match (street names)
     4. Default: None (unmatched)
 
     Returns (zone_key, zone_name) or (None, None).
@@ -193,30 +303,37 @@ def match_zone(address, city, site_description=""):
         if city_lower in zone_data["cities"]:
             return zone_key, zone_data["name"]
 
-    # 2. For Toronto properties, try neighbourhood matching
-    if "toronto" in city_lower or not city_lower:
-        best_match = None
-        best_score = 0
+    # 2. Detect CMA to narrow zone search
+    cma = _detect_cma(city)
+    if not cma:
+        return None, None
 
-        for zone_key, zone_data in CMHC_ZONES.items():
-            # Check neighbourhood names in site description and address
-            for neighbourhood in zone_data["neighbourhoods"]:
-                if neighbourhood in combined:
-                    score = len(neighbourhood)  # longer match = more specific
-                    if score > best_score:
-                        best_score = score
-                        best_match = (zone_key, zone_data["name"])
+    # 3. Search zones within this CMA
+    best_match = None
+    best_score = 0
 
-            # Check address patterns (street names)
-            for pattern in zone_data.get("address_patterns", []):
-                if pattern in addr_lower:
-                    score = len(pattern)
-                    if score > best_score:
-                        best_score = score
-                        best_match = (zone_key, zone_data["name"])
+    for zone_key, zone_data in CMHC_ZONES.items():
+        if zone_data.get("cma") != cma:
+            continue
 
-        if best_match:
-            return best_match
+        # Check neighbourhood names in site description and address
+        for neighbourhood in zone_data.get("neighbourhoods", []):
+            if neighbourhood in combined:
+                score = len(neighbourhood)
+                if score > best_score:
+                    best_score = score
+                    best_match = (zone_key, zone_data["name"])
+
+        # Check address patterns (street names)
+        for pattern in zone_data.get("address_patterns", []):
+            if pattern in addr_lower:
+                score = len(pattern)
+                if score > best_score:
+                    best_score = score
+                    best_match = (zone_key, zone_data["name"])
+
+    if best_match:
+        return best_match
 
     return None, None
 
@@ -247,8 +364,8 @@ def tag_properties(db_file, default_zone=None):
 
     Args:
         db_file: Path to SQLite database.
-        default_zone: Optional zone_key for unmatched Toronto properties
-                      (e.g. "zone_3" to default to Toronto Central).
+        default_zone: Optional zone_key for unmatched properties within a
+                      known CMA (e.g. "toronto_zone_3" for Toronto Central).
 
     Returns count of tagged properties.
     """
@@ -267,6 +384,12 @@ def tag_properties(db_file, default_zone=None):
         if props.empty:
             return 0
 
+        # Extract default CMA from default_zone (e.g. "toronto_zone_3" → "toronto")
+        default_cma = None
+        if default_zone:
+            parts = default_zone.rsplit("_zone_", 1)
+            default_cma = parts[0] if len(parts) == 2 else None
+
         tagged = 0
         unmatched = 0
         zone_counts = {}
@@ -278,10 +401,10 @@ def tag_properties(db_file, default_zone=None):
                 row.get("site_description", ""),
             )
 
-            # Apply default for unmatched Toronto properties
-            if not zone_key and default_zone:
-                city_lower = str(row.get("city", "")).strip().lower()
-                if "toronto" in city_lower or not city_lower:
+            # Apply default for unmatched properties in the default CMA
+            if not zone_key and default_zone and default_cma:
+                prop_cma = _detect_cma(row.get("city", ""))
+                if prop_cma == default_cma:
                     zone_key = default_zone
                     zone_info = CMHC_ZONES.get(zone_key, SUBURBAN_ZONES.get(zone_key, {}))
                     zone_name = zone_info.get("name", default_zone)
@@ -315,22 +438,25 @@ def tag_properties(db_file, default_zone=None):
 # Display
 # ---------------------------------------------------------------------------
 
-def show_zones():
+def show_zones(cma_filter=None):
     """Print CMHC zone definitions."""
-    print("CMHC Survey Zones — Toronto CMA\n")
+    cmas = {}
+    for zk, zdata in {**CMHC_ZONES, **SUBURBAN_ZONES}.items():
+        cma = zdata.get("cma", "unknown")
+        if cma_filter and cma != cma_filter:
+            continue
+        cmas.setdefault(cma, []).append((zk, zdata))
 
-    print("City of Toronto zones:")
-    print("-" * 60)
-    for zk in sorted(CMHC_ZONES.keys()):
-        zone = CMHC_ZONES[zk]
-        print(f"  {zk:8s}  {zone['name']:25s}  {zone['description']}")
-
-    print(f"\nSuburban municipalities:")
-    print("-" * 60)
-    for zk in sorted(SUBURBAN_ZONES.keys()):
-        zone = SUBURBAN_ZONES[zk]
-        cities = ", ".join(c.title() for c in zone.get("cities", []))
-        print(f"  {zk:8s}  {zone['name']:25s}  {cities}")
+    for cma in sorted(cmas.keys()):
+        zones = cmas[cma]
+        print(f"\n{'='*60}")
+        print(f"CMHC Zones — {cma.upper()} CMA")
+        print(f"{'='*60}")
+        for zk, zdata in sorted(zones):
+            desc = zdata.get("description", "")
+            cities = ", ".join(c.title() for c in zdata.get("cities", []))
+            detail = desc or cities
+            print(f"  {zk:25s}  {zdata['name']:25s}  {detail}")
 
 
 # ---------------------------------------------------------------------------
@@ -341,8 +467,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description="CMHC zone tagging for properties")
     parser.add_argument("--tag", action="store_true",
                         help="Tag all properties in DB with their CMHC zone")
-    parser.add_argument("--default", default="zone_3", dest="default_zone",
-                        help="Default zone for unmatched Toronto properties (default: zone_3)")
+    parser.add_argument("--default", default="toronto_zone_3", dest="default_zone",
+                        help="Default zone for unmatched properties (default: toronto_zone_3)")
+    parser.add_argument("--cma", default=None,
+                        help="Filter zone display by CMA (e.g. toronto, ottawa)")
     return parser.parse_args()
 
 
@@ -357,4 +485,4 @@ if __name__ == "__main__":
         tagged = tag_properties(db_file, default_zone=args.default_zone)
         print(f"\nDone: {tagged} properties tagged")
     else:
-        show_zones()
+        show_zones(cma_filter=args.cma)

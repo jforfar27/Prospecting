@@ -371,7 +371,7 @@ def compute_market_comps(db_file, months=36):
 
     # Tag properties with CMHC zones before computing comps
     from cmhc_data import tag_properties
-    tag_properties(db_file, default_zone="zone_3")
+    tag_properties(db_file, default_zone="toronto_zone_3")
 
     conn = sqlite3.connect(db_file)
     try:
