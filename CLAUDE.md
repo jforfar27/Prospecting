@@ -68,7 +68,9 @@ python run_pipeline.py --headless --notify slack
 ## Prerequisites
 
 - **Chrome browser** must be installed (undetected-chromedriver requires it)
+- **Python 3.12+** requires `setuptools` installed in the venv (provides `distutils` which `undetected-chromedriver` needs): `pip install setuptools`
 - **Python venv** with deps: `pip install -r requirements.txt`
+- **Always use the venv Python** — either `source venv/Scripts/activate` first, or call `venv/Scripts/python.exe` directly
 - **`.env` file** with credentials (see `.env.example`):
   - `REALTRACK_USERNAME` / `REALTRACK_PASSWORD` — RealTrack login
   - `AIRTABLE_API_KEY` — Personal Access Token with schema + data read/write scopes
@@ -120,6 +122,7 @@ All in `output/` directory (gitignored):
 
 ## Common Issues
 
+- **`distutils` missing (Python 3.12+)**: `undetected-chromedriver` depends on `distutils` which was removed in Python 3.12. Fix: `pip install setuptools` in the venv.
 - **Chrome version mismatch**: `undetected-chromedriver` auto-detects Chrome version. If Chrome auto-updates and breaks, updating the `chrome-version` package may help.
 - **RealTrack login failure**: Check credentials in `.env`. The site may have changed its login page structure — check `functions.py:signin_and_load_search_page`.
 - **Airtable rate limits**: Sync uploads in batches of 10. Large syncs may hit rate limits — the error is logged but non-fatal.

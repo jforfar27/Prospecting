@@ -20,6 +20,7 @@ AIRTABLE_TABLE_NAMES = {
     "transaction": "Transactions",
     "charges": "Charges",
     "parties": "Parties",
+    "master": "Master",
 }
 
 # Columns to exclude from Airtable sync (stored in SQLite only)
@@ -64,10 +65,46 @@ def _build_field_converters():
 
 FIELD_CONVERTERS = _build_field_converters()
 
+# --- Entity Resolution / BD Outreach Configuration ---
+ENTITY_RESOLUTION_CONFIG = {
+    # Only resolve parties from transactions in the last N years
+    "lookback_years": 5,
+    # Minimum properties to qualify as a "portfolio player"
+    "portfolio_threshold": 3,
+    # Skip these party names (not real companies)
+    "ignore_names": [
+        "Named Individual(s)",
+        "Ontario Superior Court of Justice",
+        "Her Majesty the Queen",
+        "Canada Mortgage and Housing Corporation",
+        "CMHC",
+    ],
+    # Known SPE → parent company mappings (manually curated overrides)
+    # Add entries here as you confirm them — these take priority over auto-resolution
+    "manual_mappings": {
+        # "SPE Name": "Parent Company",
+        # Example: "DD 149 Henry Ltd": "Starlight Investments",
+    },
+    # Fuzzy dedup: minimum similarity ratio (0.0-1.0) to consider two names a match
+    "fuzzy_threshold": 0.85,
+}
+
 # --- Pipeline / Scheduling Configuration ---
 PIPELINE_CONFIG = {
     # Log retention (days) — logs older than this are auto-deleted
     "log_retention_days": 30,
     # Default cron schedule (weekly Sunday 2 AM) — override with PIPELINE_CRON_SCHEDULE env var
     "default_cron_schedule": "0 2 * * 0",
+}
+
+# --- Charge Maturity Configuration ---
+CHARGE_MATURITY_CONFIG = {
+    "buckets_months": [3, 6, 9, 12],
+    "min_principal": 0,  # minimum charge principal to include
+}
+
+# --- Charge Maturity Alert Configuration ---
+MATURITY_ALERT_CONFIG = {
+    "alert_bucket": "0-3 months",
+    "min_alert_principal": 100000,  # only alert on charges >= $100K
 }
