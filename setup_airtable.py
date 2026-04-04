@@ -44,6 +44,7 @@ TABLE_SCHEMAS = {
         {"name": "market_max_ppu", "type": "currency", "options": {"precision": 0, "symbol": "$"}},
         {"name": "comp_count", "type": "number", "options": {"precision": 0}},
         {"name": "ppu_vs_market", "type": "singleLineText"},
+        {"name": "cmhc_zone", "type": "singleLineText"},
         # CRM fields
         {"name": "status", "type": "singleSelect", "options": {
             "choices": [

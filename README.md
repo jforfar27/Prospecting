@@ -81,10 +81,23 @@ Unit counts are looked up from multiple sources in priority order:
 
 After unit counts are found, the tool automatically computes:
 - **$/unit** — purchase price divided by unit count
-- **Market comps** — median, average, min/max $/unit from comparable sales in the same city (last 36 months, configurable via `--comp-months`)
-- **% vs market** — how the property's $/unit compares to the city median (e.g. `+15.2%` or `-8.0%`)
+- **CMHC zone tag** — maps each property to its CMHC survey zone (e.g. Zone 3 = Toronto Central)
+- **Market comps** — median, average, min/max $/unit from comparable sales in the same CMHC zone (last 36 months, configurable via `--comp-months`). Falls back to city then region if < 2 zone comps.
+- **% vs market** — how the property's $/unit compares to the zone median (e.g. `+15.2%` or `-8.0%`)
 
-The pipeline (`run_pipeline.py`) runs unit lookup and market comps automatically after scraping.
+### CMHC zone tagging
+```bash
+# Show all CMHC zone definitions
+python cmhc_data.py
+
+# Tag all properties in DB with their CMHC zone
+python cmhc_data.py --tag
+
+# Use a different default zone for unmatched Toronto properties
+python cmhc_data.py --tag --default zone_1
+```
+
+The pipeline runs zone tagging, unit lookup, and market comps automatically after scraping.
 
 ### Manually sync CSVs to Airtable
 ```bash

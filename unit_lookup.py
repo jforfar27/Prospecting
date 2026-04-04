@@ -232,6 +232,7 @@ def ensure_unit_columns(db_file):
         cur.execute('PRAGMA table_info("Property")')
         existing_cols = {row[1] for row in cur.fetchall()}
         for col in ["unit_count", "unit_count_source", "price_per_unit",
+                    "cmhc_zone",
                     "market_median_ppu", "market_avg_ppu", "market_min_ppu",
                     "market_max_ppu", "comp_count", "ppu_vs_market"]:
             if col not in existing_cols:
@@ -357,16 +358,21 @@ def compute_price_per_unit(db_file):
 
 
 def compute_market_comps(db_file, months=36):
-    """Compute market comp stats for each property by comparing $/unit to peers in same city.
+    """Compute market comp stats by comparing $/unit to peers in same CMHC zone.
 
-    For each property with a price_per_unit, finds other sales in the same city
-    within the last `months` months and computes median, average, min, max $/unit
-    plus a percentage vs. market median. Falls back to region-level comps if
-    fewer than 2 city-level comps exist.
+    Grouping priority: CMHC zone > city > region.
+    For each property with a price_per_unit, finds other sales in the same
+    group within the last `months` months and computes median, average, min,
+    max $/unit plus a percentage vs. market median.
 
     Returns count of properties updated.
     """
     ensure_unit_columns(db_file)
+
+    # Tag properties with CMHC zones before computing comps
+    from cmhc_data import tag_properties
+    tag_properties(db_file, default_zone="zone_3")
+
     conn = sqlite3.connect(db_file)
     try:
         # Check tables exist
@@ -381,6 +387,7 @@ def compute_market_comps(db_file, months=36):
         base = pd.read_sql_query("""
             SELECT
                 p.record_id,
+                p.cmhc_zone,
                 p.city,
                 p.region,
                 CAST(p.price_per_unit AS REAL) AS ppu,
@@ -418,20 +425,26 @@ def compute_market_comps(db_file, months=36):
         if comps_pool.empty:
             return 0
 
-        # Normalize city/region for matching
+        # Normalize keys for matching
+        comps_pool["zone_key"] = comps_pool["cmhc_zone"].fillna("").str.strip().str.lower()
         comps_pool["city_key"] = comps_pool["city"].str.strip().str.lower()
         comps_pool["region_key"] = comps_pool["region"].str.strip().str.lower()
 
-        # Group comps by city and region for fast lookup
+        # Group comps by zone, city, and region for fast lookup
+        zone_groups = {}
+        for key, group in comps_pool.groupby("zone_key"):
+            if key:
+                zone_groups[key] = group
+
         city_groups = {}
-        for city_key, group in comps_pool.groupby("city_key"):
-            if city_key:
-                city_groups[city_key] = group
+        for key, group in comps_pool.groupby("city_key"):
+            if key:
+                city_groups[key] = group
 
         region_groups = {}
-        for region_key, group in comps_pool.groupby("region_key"):
-            if region_key:
-                region_groups[region_key] = group
+        for key, group in comps_pool.groupby("region_key"):
+            if key:
+                region_groups[key] = group
 
         # Compute comps for each property that has price_per_unit
         updated = 0
@@ -440,17 +453,24 @@ def compute_market_comps(db_file, months=36):
             if not ppu or ppu <= 0:
                 continue
 
+            zone_key = str(row.get("cmhc_zone") or "").strip().lower()
             city_key = str(row["city"]).strip().lower() if row["city"] else ""
             region_key = str(row["region"]).strip().lower() if row["region"] else ""
             record_id = row["record_id"]
 
-            # Try city-level comps first (exclude self)
+            # Priority 1: CMHC zone comps
             peers = None
-            if city_key and city_key in city_groups:
-                city_comps = city_groups[city_key]
-                peers = city_comps[city_comps["record_id"] != record_id]["ppu"]
+            if zone_key and zone_key in zone_groups:
+                zone_comps = zone_groups[zone_key]
+                peers = zone_comps[zone_comps["record_id"] != record_id]["ppu"]
 
-            # Fallback to region if < 2 city comps
+            # Priority 2: City-level comps (fallback if < 2 zone comps)
+            if peers is None or len(peers) < 2:
+                if city_key and city_key in city_groups:
+                    city_comps = city_groups[city_key]
+                    peers = city_comps[city_comps["record_id"] != record_id]["ppu"]
+
+            # Priority 3: Region-level comps
             if peers is None or len(peers) < 2:
                 if region_key and region_key in region_groups:
                     region_comps = region_groups[region_key]
@@ -516,6 +536,7 @@ def export_comps(db_file, output_dir):
                 p.address,
                 p.city,
                 p.region,
+                p.cmhc_zone,
                 t.sale_date,
                 t.purchase_price,
                 p.unit_count,
@@ -525,7 +546,6 @@ def export_comps(db_file, output_dir):
                 p.comp_count,
                 p.ppu_vs_market,
                 p.acreage,
-                p.site_description,
                 t.cash,
                 t.assumed_vbt_debt,
                 p.record_id
