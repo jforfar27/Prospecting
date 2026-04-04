@@ -44,11 +44,6 @@ TABLE_SCHEMAS = {
         {"name": "market_max_ppu", "type": "currency", "options": {"precision": 0, "symbol": "$"}},
         {"name": "comp_count", "type": "number", "options": {"precision": 0}},
         {"name": "ppu_vs_market", "type": "singleLineText"},
-        {"name": "cmhc_zone", "type": "singleLineText"},
-        {"name": "estimated_monthly_rent", "type": "currency", "options": {"precision": 0, "symbol": "$"}},
-        {"name": "estimated_annual_income", "type": "currency", "options": {"precision": 0, "symbol": "$"}},
-        {"name": "estimated_noi", "type": "currency", "options": {"precision": 0, "symbol": "$"}},
-        {"name": "estimated_cap_rate", "type": "singleLineText"},
         # CRM fields
         {"name": "status", "type": "singleSelect", "options": {
             "choices": [

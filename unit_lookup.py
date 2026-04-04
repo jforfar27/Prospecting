@@ -524,10 +524,8 @@ def export_comps(db_file, output_dir):
                 p.market_avg_ppu,
                 p.comp_count,
                 p.ppu_vs_market,
-                p.estimated_annual_income,
-                p.estimated_noi,
-                p.estimated_cap_rate,
                 p.acreage,
+                p.site_description,
                 t.cash,
                 t.assumed_vbt_debt,
                 p.record_id

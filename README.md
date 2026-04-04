@@ -84,24 +84,7 @@ After unit counts are found, the tool automatically computes:
 - **Market comps** — median, average, min/max $/unit from comparable sales in the same city (last 36 months, configurable via `--comp-months`)
 - **% vs market** — how the property's $/unit compares to the city median (e.g. `+15.2%` or `-8.0%`)
 
-### CMHC rental estimates and cap rates
-```bash
-# Show CMHC data for Zone 3 (Toronto Central)
-python cmhc_data.py
-
-# Compute rental estimates for all properties in DB
-python cmhc_data.py --compute
-
-# Use a different zone
-python cmhc_data.py --compute --zone toronto_cma
-```
-
-Uses CMHC Rental Market Survey data (October 2025) to estimate:
-- **Gross rental income** — unit count × blended average rent (weighted by bedroom mix)
-- **NOI** — gross income minus operating expenses (default 40%)
-- **Cap rate** — NOI / purchase price
-
-The pipeline (`run_pipeline.py`) runs unit lookup, market comps, and CMHC estimates automatically after scraping.
+The pipeline (`run_pipeline.py`) runs unit lookup and market comps automatically after scraping.
 
 ### Manually sync CSVs to Airtable
 ```bash
