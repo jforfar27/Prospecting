@@ -24,7 +24,7 @@ AIRTABLE_TABLE_NAMES = {
 
 # Columns to exclude from Airtable sync (stored in SQLite only)
 AIRTABLE_EXCLUDE_COLUMNS = {
-    "property": ["raw_text"],
+    "property": ["raw_text", "unit_count_source"],
 }
 
 # Whether to create linked record fields during setup
@@ -45,6 +45,7 @@ def _build_field_converters():
     return {
         "property": {
             "acreage": parse_number,
+            "unit_count": parse_number,
         },
         "transaction": {
             "sale_date": parse_date,

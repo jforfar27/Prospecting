@@ -36,6 +36,7 @@ TABLE_SCHEMAS = {
         {"name": "instrument_number", "type": "singleLineText"},
         {"name": "acreage", "type": "number", "options": {"precision": 2}},
         {"name": "assessment_roll_number", "type": "singleLineText"},
+        {"name": "unit_count", "type": "number", "options": {"precision": 0}},
         # CRM fields
         {"name": "status", "type": "singleSelect", "options": {
             "choices": [

@@ -141,6 +141,23 @@ def step_scrape(args, logger):
     return True, "Scrape + export complete", elapsed
 
 
+def step_unit_lookup(logger):
+    """Look up unit counts for properties missing them."""
+    logger.info("Starting unit count lookup...")
+    start = time.time()
+
+    try:
+        from unit_lookup import run_lookup
+        results = run_lookup(all_missing=True)
+        elapsed = time.time() - start
+        found = sum(1 for r in (results or []) if r.get("unit_count"))
+        total = len(results or [])
+        return True, f"{found}/{total} unit counts found", elapsed
+    except Exception as e:
+        elapsed = time.time() - start
+        return False, str(e), elapsed
+
+
 def step_sync(logger):
     """Sync CSVs to Airtable."""
     logger.info("Starting Airtable sync...")
@@ -438,12 +455,19 @@ def run_pipeline(args):
                 if not args.scrape_only:
                     logger.info("Attempting Airtable sync with existing data...")
 
-        # Step 2: Airtable Sync (unless scrape-only)
+        # Step 2: Unit count lookup (after scrape, before sync)
+        if not args.sync_only:
+            ok, details, elapsed = step_unit_lookup(logger)
+            result.record_step("Unit Lookup", ok, details, elapsed)
+            if not ok:
+                logger.warning(f"Unit lookup had issues: {details}")
+
+        # Step 3: Airtable Sync (unless scrape-only)
         if not args.scrape_only:
             ok, details, elapsed = step_sync(logger)
             result.record_step("Airtable Sync", ok, details, elapsed)
 
-        # Step 3: Cleanup old logs
+        # Step 4: Cleanup old logs
         step_cleanup_logs(logger)
 
     except KeyboardInterrupt:
@@ -478,13 +502,19 @@ def main():
     # Dry run
     if args.dry_run:
         steps = []
+        n = 1
         if not args.sync_only:
-            steps.append("1. Scrape RealTrack + export CSVs")
+            steps.append(f"{n}. Scrape RealTrack + export CSVs")
+            n += 1
+            steps.append(f"{n}. Look up unit counts for new properties")
+            n += 1
         if not args.scrape_only:
-            steps.append(f"{'2' if not args.sync_only else '1'}. Sync to Airtable")
-        steps.append(f"{'3' if not args.sync_only and not args.scrape_only else '2'}. Cleanup old logs")
+            steps.append(f"{n}. Sync to Airtable")
+            n += 1
+        steps.append(f"{n}. Cleanup old logs")
+        n += 1
         if args.notify:
-            steps.append(f"{'4' if not args.sync_only and not args.scrape_only else '3'}. Notify via {args.notify}")
+            steps.append(f"{n}. Notify via {args.notify}")
 
         print("Dry run — would execute:")
         for s in steps:

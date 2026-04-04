@@ -6,7 +6,7 @@ Scrapes multi-residential property acquisition data from RealTrack.com and optio
 
 | Table | Description |
 |-------|-------------|
-| **Property** | Address, city, region, PIN, site description, instrument number, acreage, assessment roll number |
+| **Property** | Address, city, region, PIN, site description, instrument number, acreage, assessment roll number, unit count |
 | **Transaction** | Sale date, purchase price, cash amount, assumed/VTB debt, portfolio flag |
 | **Charges** | Chargee name, principal, rate, due date, registered date |
 | **Parties** | Transferor/Transferee names, phone, attention/care of, address |
@@ -58,6 +58,28 @@ python realtrack_scraper.py --resume
 ```bash
 python realtrack_scraper.py --type "Commercial" --min-amount 2000000 --start-year 00
 ```
+
+### Look up unit counts for properties
+```bash
+# Last 20 properties
+python unit_lookup.py
+
+# Last 50 properties
+python unit_lookup.py --limit 50
+
+# All properties missing unit counts
+python unit_lookup.py --all
+
+# Single address lookup (no DB needed)
+python unit_lookup.py --address "123 Main St" --city "Toronto"
+```
+
+Unit counts are looked up from multiple sources in priority order:
+1. **RealTrack data** — parses unit mentions from scraped site descriptions
+2. **Toronto Open Data** — Apartment Building Registration dataset (Toronto properties)
+3. **Web search** — DuckDuckGo search fallback for other cities
+
+The pipeline (`run_pipeline.py`) runs unit lookup automatically after scraping.
 
 ### Manually sync CSVs to Airtable
 ```bash

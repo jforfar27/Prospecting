@@ -10,7 +10,7 @@ This guide covers three layers of automation for the RealTrack prospecting pipel
 
 ## 1. Pipeline Orchestrator (`run_pipeline.py`)
 
-The orchestrator runs the full pipeline in sequence: **scrape → export → sync → notify**.
+The orchestrator runs the full pipeline in sequence: **scrape → export → unit lookup → sync → notify**.
 
 ### Quick Start
 
