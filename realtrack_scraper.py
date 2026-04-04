@@ -197,6 +197,8 @@ def export_data(db_file, output_dir):
             "purchase_price": transaction_row['purchase_price'],
             "unit_count": prop_row.get('unit_count', ''),
             "price_per_unit": prop_row.get('price_per_unit', ''),
+            "market_median_ppu": prop_row.get('market_median_ppu', ''),
+            "ppu_vs_market": prop_row.get('ppu_vs_market', ''),
             "cash / assumed_vtb_debt": f"{transaction_row['cash']} / {transaction_row['assumed_vbt_debt']}",
         }
 

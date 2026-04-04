@@ -47,6 +47,11 @@ def _build_field_converters():
             "acreage": parse_number,
             "unit_count": parse_number,
             "price_per_unit": parse_currency,
+            "market_median_ppu": parse_currency,
+            "market_avg_ppu": parse_currency,
+            "market_min_ppu": parse_currency,
+            "market_max_ppu": parse_currency,
+            "comp_count": parse_number,
         },
         "transaction": {
             "sale_date": parse_date,

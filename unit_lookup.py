@@ -21,6 +21,7 @@ import argparse
 import sqlite3
 import requests
 import pandas as pd
+from datetime import datetime, timedelta
 from urllib.parse import quote_plus
 
 import config
@@ -230,7 +231,9 @@ def ensure_unit_columns(db_file):
             return
         cur.execute('PRAGMA table_info("Property")')
         existing_cols = {row[1] for row in cur.fetchall()}
-        for col in ["unit_count", "unit_count_source", "price_per_unit"]:
+        for col in ["unit_count", "unit_count_source", "price_per_unit",
+                    "market_median_ppu", "market_avg_ppu", "market_min_ppu",
+                    "market_max_ppu", "comp_count", "ppu_vs_market"]:
             if col not in existing_cols:
                 cur.execute(f'ALTER TABLE "Property" ADD COLUMN "{col}" TEXT')
         conn.commit()
@@ -353,8 +356,152 @@ def compute_price_per_unit(db_file):
         conn.close()
 
 
+def compute_market_comps(db_file, months=36):
+    """Compute market comp stats for each property by comparing $/unit to peers in same city.
+
+    For each property with a price_per_unit, finds other sales in the same city
+    within the last `months` months and computes median, average, min, max $/unit
+    plus a percentage vs. market median. Falls back to region-level comps if
+    fewer than 2 city-level comps exist.
+
+    Returns count of properties updated.
+    """
+    ensure_unit_columns(db_file)
+    conn = sqlite3.connect(db_file)
+    try:
+        # Check tables exist
+        tables = pd.read_sql_query(
+            "SELECT name FROM sqlite_master WHERE type='table'", conn
+        )
+        table_names = set(tables["name"].tolist())
+        if "Property" not in table_names or "Transaction" not in table_names:
+            return 0
+
+        # Load all properties with price_per_unit joined to their transaction
+        base = pd.read_sql_query("""
+            SELECT
+                p.record_id,
+                p.city,
+                p.region,
+                CAST(p.price_per_unit AS REAL) AS ppu,
+                t.sale_date,
+                t.portfolio_flag
+            FROM "Property" p
+            INNER JOIN "Transaction" t ON t.property_record_id = p.record_id
+            WHERE p.price_per_unit IS NOT NULL AND p.price_per_unit != ''
+              AND p.unit_count IS NOT NULL AND p.unit_count != ''
+        """, conn)
+
+        if base.empty:
+            return 0
+
+        # Deduplicate: keep first transaction per property
+        base = base.drop_duplicates(subset="record_id", keep="first")
+
+        # Parse sale dates and filter to time window
+        from type_converters import parse_date
+        cutoff = (datetime.now() - timedelta(days=months * 30)).strftime("%Y-%m-%d")
+
+        def parse_sale_date(val):
+            parsed = parse_date(val)
+            return parsed if parsed else None
+
+        base["sale_date_iso"] = base["sale_date"].apply(parse_sale_date)
+
+        # Build comps pool: within time window, exclude portfolio sales
+        comps_pool = base[
+            (base["sale_date_iso"].notna()) &
+            (base["sale_date_iso"] >= cutoff) &
+            (~base["portfolio_flag"].str.lower().isin(["portfolio", "true", "yes", "1"]))
+        ].copy()
+
+        if comps_pool.empty:
+            return 0
+
+        # Normalize city/region for matching
+        comps_pool["city_key"] = comps_pool["city"].str.strip().str.lower()
+        comps_pool["region_key"] = comps_pool["region"].str.strip().str.lower()
+
+        # Group comps by city and region for fast lookup
+        city_groups = {}
+        for city_key, group in comps_pool.groupby("city_key"):
+            if city_key:
+                city_groups[city_key] = group
+
+        region_groups = {}
+        for region_key, group in comps_pool.groupby("region_key"):
+            if region_key:
+                region_groups[region_key] = group
+
+        # Compute comps for each property that has price_per_unit
+        updated = 0
+        for _, row in base.iterrows():
+            ppu = row["ppu"]
+            if not ppu or ppu <= 0:
+                continue
+
+            city_key = str(row["city"]).strip().lower() if row["city"] else ""
+            region_key = str(row["region"]).strip().lower() if row["region"] else ""
+            record_id = row["record_id"]
+
+            # Try city-level comps first (exclude self)
+            peers = None
+            if city_key and city_key in city_groups:
+                city_comps = city_groups[city_key]
+                peers = city_comps[city_comps["record_id"] != record_id]["ppu"]
+
+            # Fallback to region if < 2 city comps
+            if peers is None or len(peers) < 2:
+                if region_key and region_key in region_groups:
+                    region_comps = region_groups[region_key]
+                    peers = region_comps[region_comps["record_id"] != record_id]["ppu"]
+
+            # Need at least 2 comps for meaningful stats
+            if peers is None or len(peers) < 2:
+                continue
+
+            median_ppu = peers.median()
+            avg_ppu = peers.mean()
+            min_ppu = peers.min()
+            max_ppu = peers.max()
+            comp_count = len(peers)
+
+            # Compute % vs market
+            if median_ppu > 0:
+                vs_market = (ppu - median_ppu) / median_ppu * 100
+                vs_market_str = f"{vs_market:+.1f}%"
+            else:
+                vs_market_str = None
+
+            conn.execute(
+                """UPDATE "Property" SET
+                    market_median_ppu = ?,
+                    market_avg_ppu = ?,
+                    market_min_ppu = ?,
+                    market_max_ppu = ?,
+                    comp_count = ?,
+                    ppu_vs_market = ?
+                WHERE record_id = ?""",
+                (
+                    str(round(median_ppu, 2)),
+                    str(round(avg_ppu, 2)),
+                    str(round(min_ppu, 2)),
+                    str(round(max_ppu, 2)),
+                    str(comp_count),
+                    vs_market_str,
+                    record_id,
+                ),
+            )
+            updated += 1
+
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
+
+
 def export_comps(db_file, output_dir):
-    """Export a Comps CSV joining property, transaction, and unit data."""
+    """Export a Comps CSV joining property, transaction, and market comp data."""
     conn = sqlite3.connect(db_file)
     try:
         tables = pd.read_sql_query(
@@ -373,6 +520,10 @@ def export_comps(db_file, output_dir):
                 t.purchase_price,
                 p.unit_count,
                 p.price_per_unit,
+                p.market_median_ppu,
+                p.market_avg_ppu,
+                p.comp_count,
+                p.ppu_vs_market,
                 p.acreage,
                 p.site_description,
                 t.cash,
@@ -420,7 +571,7 @@ def lookup_single(address, city):
 # Main
 # ---------------------------------------------------------------------------
 
-def run_lookup(limit=20, all_missing=False):
+def run_lookup(limit=20, all_missing=False, comp_months=36):
     """Run unit count lookup for properties in the database."""
     db_file = config.DB_FILE
 
@@ -492,6 +643,11 @@ def run_lookup(limit=20, all_missing=False):
     if updated:
         print(f"Computed $/unit for {updated} properties")
 
+    # Compute market comps (median, avg, range, % vs market)
+    comps_updated = compute_market_comps(db_file, months=comp_months)
+    if comps_updated:
+        print(f"Computed market comps for {comps_updated} properties")
+
     # Export comps table
     export_comps(db_file, config.OUTPUT_DIR)
 
@@ -502,6 +658,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Look up unit counts for scraped properties")
     parser.add_argument("--limit", type=int, default=20, help="Number of recent properties to look up (default: 20)")
     parser.add_argument("--all", action="store_true", dest="all_missing", help="Look up all properties missing unit_count")
+    parser.add_argument("--comp-months", type=int, default=36, help="Months of sales history for market comps (default: 36)")
     parser.add_argument("--address", help="Single address lookup (no DB needed)")
     parser.add_argument("--city", default="", help="City for single address lookup")
     return parser.parse_args()
@@ -517,4 +674,4 @@ if __name__ == "__main__":
         else:
             print(f"{args.address}, {args.city}: unit count not found")
     else:
-        run_lookup(limit=args.limit, all_missing=args.all_missing)
+        run_lookup(limit=args.limit, all_missing=args.all_missing, comp_months=args.comp_months)

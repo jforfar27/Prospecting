@@ -6,7 +6,7 @@ Scrapes multi-residential property acquisition data from RealTrack.com and optio
 
 | Table | Description |
 |-------|-------------|
-| **Property** | Address, city, region, PIN, site description, instrument number, acreage, assessment roll number, unit count |
+| **Property** | Address, city, region, PIN, site description, instrument number, acreage, assessment roll number, unit count, $/unit, market comps |
 | **Transaction** | Sale date, purchase price, cash amount, assumed/VTB debt, portfolio flag |
 | **Charges** | Chargee name, principal, rate, due date, registered date |
 | **Parties** | Transferor/Transferee names, phone, attention/care of, address |
@@ -79,7 +79,12 @@ Unit counts are looked up from multiple sources in priority order:
 2. **Toronto Open Data** — Apartment Building Registration dataset (Toronto properties)
 3. **Web search** — DuckDuckGo search fallback for other cities
 
-The pipeline (`run_pipeline.py`) runs unit lookup automatically after scraping.
+After unit counts are found, the tool automatically computes:
+- **$/unit** — purchase price divided by unit count
+- **Market comps** — median, average, min/max $/unit from comparable sales in the same city (last 36 months, configurable via `--comp-months`)
+- **% vs market** — how the property's $/unit compares to the city median (e.g. `+15.2%` or `-8.0%`)
+
+The pipeline (`run_pipeline.py`) runs unit lookup and market comps automatically after scraping.
 
 ### Manually sync CSVs to Airtable
 ```bash
@@ -104,7 +109,7 @@ SEARCH_CONFIG = {
 All output files are written to the `output/` directory:
 - `RealTrack.db` — SQLite database (primary data store)
 - `Property.csv`, `Transaction.csv`, `Chargees.csv`, `Parties.csv` — individual table exports
-- `Comps.csv` — comparables table (address, price, unit count, $/unit, sale date)
+- `Comps.csv` — comparables table (address, price, unit count, $/unit, market median, % vs market)
 - `realtrack_export_YYYYMMDD_HHMMSS.xlsx` — consolidated Excel report with unit count and $/unit
 
 ## Airtable Setup

@@ -38,6 +38,12 @@ TABLE_SCHEMAS = {
         {"name": "assessment_roll_number", "type": "singleLineText"},
         {"name": "unit_count", "type": "number", "options": {"precision": 0}},
         {"name": "price_per_unit", "type": "currency", "options": {"precision": 2, "symbol": "$"}},
+        {"name": "market_median_ppu", "type": "currency", "options": {"precision": 0, "symbol": "$"}},
+        {"name": "market_avg_ppu", "type": "currency", "options": {"precision": 0, "symbol": "$"}},
+        {"name": "market_min_ppu", "type": "currency", "options": {"precision": 0, "symbol": "$"}},
+        {"name": "market_max_ppu", "type": "currency", "options": {"precision": 0, "symbol": "$"}},
+        {"name": "comp_count", "type": "number", "options": {"precision": 0}},
+        {"name": "ppu_vs_market", "type": "singleLineText"},
         # CRM fields
         {"name": "status", "type": "singleSelect", "options": {
             "choices": [
