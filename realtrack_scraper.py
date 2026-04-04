@@ -195,6 +195,8 @@ def export_data(db_file, output_dir):
             "city / region": f"{prop_row['city']} / {prop_row['region']}",
             "sale_date": transaction_row['sale_date'],
             "purchase_price": transaction_row['purchase_price'],
+            "unit_count": prop_row.get('unit_count', ''),
+            "price_per_unit": prop_row.get('price_per_unit', ''),
             "cash / assumed_vtb_debt": f"{transaction_row['cash']} / {transaction_row['assumed_vbt_debt']}",
         }
 

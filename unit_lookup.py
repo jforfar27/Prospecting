@@ -220,16 +220,19 @@ def lookup_unit_count(row):
 # ---------------------------------------------------------------------------
 
 def ensure_unit_columns(db_file):
-    """Add unit_count and unit_count_source columns to Property table if missing."""
+    """Add unit_count, unit_count_source, and price_per_unit columns to Property table if missing."""
     conn = sqlite3.connect(db_file)
     cur = conn.cursor()
     try:
+        # Check if Property table exists
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Property'")
+        if not cur.fetchone():
+            return
         cur.execute('PRAGMA table_info("Property")')
         existing_cols = {row[1] for row in cur.fetchall()}
-        if "unit_count" not in existing_cols:
-            cur.execute('ALTER TABLE "Property" ADD COLUMN "unit_count" TEXT')
-        if "unit_count_source" not in existing_cols:
-            cur.execute('ALTER TABLE "Property" ADD COLUMN "unit_count_source" TEXT')
+        for col in ["unit_count", "unit_count_source", "price_per_unit"]:
+            if col not in existing_cols:
+                cur.execute(f'ALTER TABLE "Property" ADD COLUMN "{col}" TEXT')
         conn.commit()
     finally:
         conn.close()
@@ -268,6 +271,130 @@ def save_unit_count(db_file, record_id, unit_count, source):
             (str(unit_count), source, record_id),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Price per unit computation
+# ---------------------------------------------------------------------------
+
+def _parse_price(val):
+    """Convert price string like '$4,500,000' to float."""
+    if not val or (isinstance(val, float) and pd.isna(val)):
+        return None
+    cleaned = re.sub(r'[$,\s]', '', str(val).strip())
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def compute_price_per_unit(db_file):
+    """Compute price_per_unit for all properties that have both unit_count and a purchase_price.
+
+    Joins Property.unit_count with Transaction.purchase_price and writes
+    price_per_unit back to the Property table. Returns count of updated rows.
+    """
+    ensure_unit_columns(db_file)
+    conn = sqlite3.connect(db_file)
+    try:
+        # Check both tables exist
+        tables = pd.read_sql_query(
+            "SELECT name FROM sqlite_master WHERE type='table'", conn
+        )
+        table_names = set(tables["name"].tolist())
+        if "Property" not in table_names or "Transaction" not in table_names:
+            return 0
+
+        # Get properties with unit_count
+        props = pd.read_sql_query(
+            'SELECT record_id, unit_count FROM "Property" '
+            'WHERE unit_count IS NOT NULL AND unit_count != ""',
+            conn,
+        )
+        if props.empty:
+            return 0
+
+        # Get first transaction per property (by property_record_id)
+        txns = pd.read_sql_query(
+            'SELECT property_record_id, purchase_price FROM "Transaction"',
+            conn,
+        )
+        if txns.empty:
+            return 0
+
+        # Deduplicate: keep first transaction per property
+        txns = txns.drop_duplicates(subset="property_record_id", keep="first")
+
+        # Merge
+        merged = props.merge(
+            txns,
+            left_on="record_id",
+            right_on="property_record_id",
+            how="inner",
+        )
+
+        updated = 0
+        for _, row in merged.iterrows():
+            units = _parse_price(row["unit_count"])  # stored as text
+            price = _parse_price(row["purchase_price"])
+            if units and units > 0 and price and price > 0:
+                ppu = round(price / units, 2)
+                conn.execute(
+                    'UPDATE "Property" SET price_per_unit = ? WHERE record_id = ?',
+                    (str(ppu), row["record_id"]),
+                )
+                updated += 1
+
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
+
+
+def export_comps(db_file, output_dir):
+    """Export a Comps CSV joining property, transaction, and unit data."""
+    conn = sqlite3.connect(db_file)
+    try:
+        tables = pd.read_sql_query(
+            "SELECT name FROM sqlite_master WHERE type='table'", conn
+        )
+        table_names = set(tables["name"].tolist())
+        if "Property" not in table_names or "Transaction" not in table_names:
+            return None
+
+        query = """
+            SELECT
+                p.address,
+                p.city,
+                p.region,
+                t.sale_date,
+                t.purchase_price,
+                p.unit_count,
+                p.price_per_unit,
+                p.acreage,
+                p.site_description,
+                t.cash,
+                t.assumed_vbt_debt,
+                p.record_id
+            FROM "Property" p
+            LEFT JOIN "Transaction" t
+                ON t.property_record_id = p.record_id
+            ORDER BY t.sale_date DESC
+        """
+        df = pd.read_sql_query(query, conn)
+
+        if df.empty:
+            return None
+
+        # Deduplicate (keep first transaction per property)
+        df = df.drop_duplicates(subset="record_id", keep="first")
+
+        comps_file = os.path.join(output_dir, "Comps.csv")
+        df.to_csv(comps_file, index=False)
+        print(f"Comps exported: {comps_file} ({len(df)} properties)")
+        return comps_file
     finally:
         conn.close()
 
@@ -359,6 +486,14 @@ def run_lookup(limit=20, all_missing=False):
         results_file = os.path.join(config.OUTPUT_DIR, "unit_lookup_results.csv")
         results_df.to_csv(results_file, index=False)
         print(f"Results saved: {results_file}")
+
+    # Compute $/unit for all properties with unit_count + purchase_price
+    updated = compute_price_per_unit(db_file)
+    if updated:
+        print(f"Computed $/unit for {updated} properties")
+
+    # Export comps table
+    export_comps(db_file, config.OUTPUT_DIR)
 
     return results
 

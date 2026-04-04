@@ -104,7 +104,8 @@ SEARCH_CONFIG = {
 All output files are written to the `output/` directory:
 - `RealTrack.db` — SQLite database (primary data store)
 - `Property.csv`, `Transaction.csv`, `Chargees.csv`, `Parties.csv` — individual table exports
-- `realtrack_export_YYYYMMDD_HHMMSS.xlsx` — consolidated Excel report
+- `Comps.csv` — comparables table (address, price, unit count, $/unit, sale date)
+- `realtrack_export_YYYYMMDD_HHMMSS.xlsx` — consolidated Excel report with unit count and $/unit
 
 ## Airtable Setup
 

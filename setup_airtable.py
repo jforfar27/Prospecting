@@ -37,6 +37,7 @@ TABLE_SCHEMAS = {
         {"name": "acreage", "type": "number", "options": {"precision": 2}},
         {"name": "assessment_roll_number", "type": "singleLineText"},
         {"name": "unit_count", "type": "number", "options": {"precision": 0}},
+        {"name": "price_per_unit", "type": "currency", "options": {"precision": 2, "symbol": "$"}},
         # CRM fields
         {"name": "status", "type": "singleSelect", "options": {
             "choices": [
