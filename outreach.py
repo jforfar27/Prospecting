@@ -141,94 +141,265 @@ def _short_address(address, city):
     return ", ".join(parts) if parts else "your property"
 
 
+def _city_phrase(city):
+    return city.strip() if city and city.strip() else "your area"
+
+
+# ------------------------------ Comps ------------------------------
+
+def _fetch_comps(conn, target_city, target_region, exclude_record_id, limit=3):
+    """Return up to `limit` recent multi-res sale comps. Same-city matches
+    rank first, then same-region fallback. Excludes the target property
+    and portfolio flags. Requires unit_count and purchase_price populated.
+    """
+    target_city = (target_city or "").strip()
+    target_region = (target_region or "").strip()
+    if not target_city and not target_region:
+        return []
+    sql = """
+        SELECT p.address, p.city, p.region, p.unit_count,
+               t.sale_date, t.purchase_price, p.price_per_unit
+        FROM Property p
+        JOIN "Transaction" t ON p.record_id = t.property_record_id
+        WHERE p.record_id != :exclude_id
+          AND t.sale_date IS NOT NULL
+          AND t.sale_date >= DATE('now', '-36 months')
+          AND (t.portfolio_flag IS NULL
+               OR LOWER(TRIM(t.portfolio_flag))
+                  NOT IN ('portfolio','true','yes','y','1'))
+          AND p.unit_count IS NOT NULL
+          AND t.purchase_price IS NOT NULL
+          AND (
+            LOWER(TRIM(p.city)) = :target_city
+            OR LOWER(TRIM(p.region)) = :target_region
+          )
+        ORDER BY
+          CASE WHEN LOWER(TRIM(p.city)) = :target_city
+               THEN 0 ELSE 1 END,
+          t.sale_date DESC
+        LIMIT :lim
+    """
+    rows = conn.execute(sql, {
+        "exclude_id": exclude_record_id or "",
+        "target_city": target_city.lower(),
+        "target_region": target_region.lower(),
+        "lim": limit,
+    }).fetchall()
+    comps = []
+    for r in rows:
+        try:
+            units = int(r["unit_count"])
+        except (ValueError, TypeError):
+            continue
+        if units <= 0:
+            continue
+        try:
+            price = float(r["purchase_price"])
+        except (ValueError, TypeError):
+            continue
+        if price <= 0:
+            continue
+        ppu_val = r["price_per_unit"]
+        try:
+            ppu = float(ppu_val) if ppu_val is not None else (price / units)
+        except (ValueError, TypeError):
+            ppu = price / units
+        comps.append({
+            "address": (r["address"] or "").strip(),
+            "city": (r["city"] or "").strip(),
+            "region": (r["region"] or "").strip(),
+            "units": units,
+            "sale_date": (r["sale_date"] or "").strip(),
+            "price": price,
+            "ppu": ppu,
+        })
+    return comps
+
+
+def _fmt_sold(sale_date):
+    if not sale_date:
+        return ""
+    return sale_date[:7]
+
+
+def _fmt_price_short(v):
+    try:
+        f = float(v)
+    except (ValueError, TypeError):
+        return ""
+    if f >= 1_000_000:
+        return "$%.1fM" % (f / 1_000_000.0)
+    if f >= 1_000:
+        return "$%.0fk" % (f / 1_000.0)
+    return "$%.0f" % f
+
+
+def _truncate(s, width):
+    s = s or ""
+    if len(s) <= width:
+        return s
+    if width <= 1:
+        return s[:width]
+    return s[: width - 1] + "."
+
+
+def _format_comps_table(comps, target_city):
+    """Render comps as a fixed-width plain-text table. Returns '' if
+    fewer than 2 comps are available.
+    """
+    if not comps or len(comps) < 2:
+        return ""
+    target_city_l = (target_city or "").strip().lower()
+    headers = ["Address", "Sold", "Units", "Price", "$/Unit", "Area"]
+    widths = [20, 7, 5, 8, 8, 14]
+    rendered = []
+    for c in comps:
+        if c["city"] and c["city"].strip().lower() == target_city_l:
+            area = c["city"]
+        elif c["region"]:
+            area = c["region"]
+        else:
+            area = c["city"] or ""
+        rendered.append([
+            _truncate(c["address"], widths[0]),
+            _fmt_sold(c["sale_date"]),
+            str(c["units"]),
+            _fmt_price_short(c["price"]),
+            _fmt_price_short(c["ppu"]),
+            _truncate(area, widths[5]),
+        ])
+
+    def fmt_row(cells):
+        out = []
+        for i, cell in enumerate(cells):
+            if i in (0, 5):
+                out.append(cell.ljust(widths[i]))
+            else:
+                out.append(cell.rjust(widths[i]))
+        return "  " + "  ".join(out)
+
+    sep = ["-" * w for w in widths]
+    lines = [
+        "Recent comps in the area:",
+        "",
+        fmt_row(headers),
+        fmt_row(sep),
+    ]
+    for r in rendered:
+        lines.append(fmt_row(r))
+    return "\n".join(lines)
+
+
 # ------------------------------ Templates ------------------------------
 
-def _build_email(draft, sender):
+def _street_only(draft):
+    s = (draft["address"] or "").strip()
+    return s or _short_address(draft["address"], draft["city"])
+
+
+def _build_email(draft, sender, comps_table=""):
     first = _first_name(draft["owner_name"])
-    addr = _short_address(draft["address"], draft["city"])
-    principal = _fmt_currency(draft["principal"])
-    rate = _fmt_percent(draft["rate"])
+    addr = _street_only(draft)
+    city = _city_phrase(draft["city"])
     due = draft["due_date"] or "the upcoming maturity"
-    chargee = draft["chargee"] or "the current lender"
+    chargee_name = (draft["chargee"] or "").strip()
+    charge_lower = ("your %s charge" % chargee_name) if chargee_name else "your mortgage"
+    charge_upper = charge_lower[0].upper() + charge_lower[1:]
     window = draft["window"]
 
     if window == "9_month":
-        subject = "Quick note re: %s" % addr
+        subject = addr
         body = (
             "Hi %s,\n\n"
-            "I track multi-residential mortgage maturities in Ontario and noticed "
-            "the charge on %s with %s is coming up around %s "
-            "(%s @ %s).\n\n"
-            "You're about 9 months out, so no rush — but if you'd like to see what "
-            "the refinancing landscape looks like now vs. locking in closer to maturity, "
-            "happy to share some recent $/unit comps and lender indications for your area.\n\n"
-            "Worth a 15-min call in the next few weeks?\n\n"
-            "Best,\n%s"
-        ) % (first, addr, chargee, due, principal, rate, sender)
+            "I was pulling comps in %s for a client's deal and came "
+            "across your acquisition of %s. I'm a multi-res lender "
+            "(CMHC and conventional). It looks like %s comes due "
+            "around %s, roughly 9 months out. My timing could be off "
+            "if you've already refinanced.\n\n"
+            "If not, I wanted to introduce myself early. When you "
+            "get closer to maturity I'd be glad to quote the "
+            "renewal, and I'm also open to looking at anything else "
+            "you have in flight.\n\n"
+            "%s"
+        ) % (first, city, addr, charge_lower, due, sender)
 
     elif window == "6_month":
-        subject = "%s — 6 months to maturity" % addr
+        subject = addr
         body = (
             "Hi %s,\n\n"
-            "Following up — the %s charge with %s on %s matures around %s. "
-            "At 6 months out, this is usually when owners start comparing refinancing "
-            "options seriously.\n\n"
-            "I can pull together:\n"
-            "  - Current $/unit comps in your submarket\n"
-            "  - 2-3 lender indications at today's rates\n"
-            "  - A refinance-vs-sell quick-look\n\n"
-            "Want me to put that together? No obligation, just useful data.\n\n"
-            "Best,\n%s"
-        ) % (first, principal, chargee, addr, due, sender)
+            "I was pulling comps in %s for a client's file and your "
+            "acquisition of %s came up. I do multi-res financing, "
+            "CMHC and conventional. %s looks like it matures around "
+            "%s, roughly 6 months out. Apologies in advance if "
+            "you've already renewed.\n\n"
+            "If you're starting to look at options, I'd like to "
+            "quote the refi. I'm also open to looking at "
+            "acquisitions or other assets you're financing right "
+            "now. Would it make sense to connect this week?\n\n"
+            "%s"
+        ) % (first, city, addr, charge_upper, due, sender)
 
     else:  # 3_month
-        subject = "%s maturity — %s" % (addr, due)
+        subject = addr
         body = (
             "Hi %s,\n\n"
-            "Your %s charge with %s on %s is due %s — ~90 days out.\n\n"
-            "Two things I can help with right now:\n"
-            "  1) Refinancing: I've got current term-sheet indications from 3-4 "
-            "active multi-res lenders and can have quotes back within a week.\n"
-            "  2) If you're considering a sale instead, I have active multi-res buyers "
-            "looking in your area at today's $/unit comps.\n\n"
-            "Happy to jump on a quick call this week — what works?\n\n"
-            "Best,\n%s"
-        ) % (first, principal, chargee, addr, due, sender)
+            "I was running comps in %s for a client and came across "
+            "%s. I'm a multi-res lender. %s looks like it's due "
+            "around %s, roughly 90 days out. If you're already set "
+            "on the renewal, no need to respond.\n\n"
+            "If you're still looking, I can turn around terms "
+            "quickly (CMHC or conventional, depending on what fits "
+            "the asset). I'd also be glad to look at anything else "
+            "you have in flight.\n\n"
+            "Do you have time for a call this week?\n\n"
+            "%s"
+        ) % (first, city, addr, charge_upper, due, sender)
+
+    if comps_table:
+        body = body + "\n\n" + comps_table
 
     return subject, body
 
 
 def _build_call_script(draft, sender):
     first = _first_name(draft["owner_name"])
-    addr = _short_address(draft["address"], draft["city"])
-    principal = _fmt_currency(draft["principal"])
+    addr = _street_only(draft)
+    city = _city_phrase(draft["city"])
     due = draft["due_date"] or "the upcoming maturity"
-    chargee = draft["chargee"] or "your current lender"
+    chargee_name = (draft["chargee"] or "").strip()
+    charge_lower = ("your %s charge" % chargee_name) if chargee_name else "your mortgage"
     window = draft["window"]
 
     opener = (
-        "Hi %s, this is %s. I track multi-res mortgage maturities in Ontario and "
-        "I see the %s charge with %s on %s comes due around %s. Got a minute?"
-        % (first, sender, principal, chargee, addr, due)
+        "Hi %s, this is %s. I do multi-res financing, CMHC and "
+        "conventional. I was pulling comps in %s for a client's "
+        "deal and your acquisition of %s came up. It looks like "
+        "%s comes due around %s, though my timing could be off. "
+        "Have you locked in the refi already, or are you still "
+        "looking at options?"
+        % (first, sender, city, addr, charge_lower, due)
     )
 
     if window == "9_month":
         pitch = (
-            "You're ~9 months out, so no pressure. I just wanted to introduce myself "
-            "and offer to share comps and refi indications when you're ready to look. "
-            "Would it be helpful if I sent a short market summary by email this week?"
+            "You've got time. I just wanted to introduce myself. "
+            "When you're closer I can put quotes together, CMHC or "
+            "conventional. Is there anything else you're working "
+            "on I should know about?"
         )
     elif window == "6_month":
         pitch = (
-            "At 6 months out most owners start shopping financing. I can pull 2-3 "
-            "lender indications and current $/unit comps for your submarket — want "
-            "me to put that in front of you this week?"
+            "Good timing to start looking. I can pull term sheets "
+            "at current rates, CMHC if it fits the asset, "
+            "conventional if not. Would it be useful if I put "
+            "something together this week?"
         )
     else:
         pitch = (
-            "You're ~90 days out, so timing matters. I've got active multi-res lender "
-            "term sheets and also buyers at today's pricing. Want me to send both sides "
-            "so you can decide refinance vs. sell?"
+            "You're getting tight on time. I can turn around terms "
+            "in a few days. Is CMHC on the table for this one, or "
+            "are we looking conventional? And while we're at it, "
+            "is there anything else in flight I could quote?"
         )
 
     return opener + "\n\n" + pitch
@@ -236,14 +407,22 @@ def _build_call_script(draft, sender):
 
 def _build_linkedin(draft, sender):
     first = _first_name(draft["owner_name"])
-    addr = _short_address(draft["address"], draft["city"])
-    window_label = {"9_month": "~9 months out", "6_month": "~6 months out",
-                    "3_month": "~90 days out"}[draft["window"]]
+    addr = _street_only(draft)
+    city = _city_phrase(draft["city"])
+    window_phrase = {
+        "9_month": "9 months",
+        "6_month": "6 months",
+        "3_month": "90 days",
+    }[draft["window"]]
     return (
-        "Hi %s — noticed the mortgage on %s comes up for renewal (%s). "
-        "I track multi-res maturities and can share current comps and lender "
-        "indications if useful. Open to connecting?"
-    ) % (first, addr, window_label)
+        "Hi %s, I was pulling comps in %s for a client and came "
+        "across %s. I'm a multi-res lender (CMHC and conventional). "
+        "The mortgage looks like it comes up in about %s, though my "
+        "info could be stale. If you're still looking at renewal "
+        "or refi options I'd like to quote it, and I'm open to "
+        "looking at anything else you have in flight. Would it "
+        "make sense to connect?"
+    ) % (first, city, addr, window_phrase)
 
 
 # ------------------------------ Core build ------------------------------
@@ -258,12 +437,8 @@ def build_drafts(force_regenerate=False, min_principal=None, sender=None):
     today = date.today()
     conn = get_db_connection()
     rows = query_charges_with_details(conn)
-    conn.close()
-
-    conn_rw = sqlite3.connect(DB_FILE)
-    _ensure_outreach_log(conn_rw)
-    already = set() if force_regenerate else _already_generated(conn_rw)
-    conn_rw.close()
+    _ensure_outreach_log(conn)
+    already = set() if force_regenerate else _already_generated(conn)
 
     drafts = []
     for row in rows:
@@ -299,12 +474,23 @@ def build_drafts(force_regenerate=False, min_principal=None, sender=None):
             "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
             "status": "queued",
         }
-        subject, body = _build_email(draft, sender)
+        comps = _fetch_comps(
+            conn,
+            draft["city"],
+            draft["region"],
+            draft["property_record_id"],
+            limit=3,
+        )
+        comps_table = _format_comps_table(comps, draft["city"])
+        subject, body = _build_email(draft, sender, comps_table=comps_table)
         draft["email_subject"] = subject
         draft["email_body"] = body
         draft["call_script"] = _build_call_script(draft, sender)
         draft["linkedin_message"] = _build_linkedin(draft, sender)
+        draft["comps_count"] = len(comps) if comps_table else 0
         drafts.append(draft)
+
+    conn.close()
 
     # Sort: most urgent window first, then largest principal
     window_order = {"3_month": 0, "6_month": 1, "9_month": 2}
@@ -331,7 +517,8 @@ def export_csv(drafts, filepath=None):
         "window_label", "due_date", "address", "city", "region",
         "owner_name", "owner_phone", "chargee", "principal", "rate",
         "email_subject", "email_body", "call_script", "linkedin_message",
-        "status", "generated_at", "property_record_id", "window",
+        "comps_count", "status", "generated_at", "property_record_id",
+        "window",
     ]
     with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
