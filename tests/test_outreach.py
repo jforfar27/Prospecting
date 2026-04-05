@@ -123,9 +123,9 @@ class FormattersTest(unittest.TestCase):
 
     def test_first_name(self):
         self.assertEqual(_first_name("John Smith"), "John")
-        self.assertEqual(_first_name("1234567 Ontario Inc"), "there")
-        self.assertEqual(_first_name(""), "there")
-        self.assertEqual(_first_name("Acme Holdings LP"), "there")
+        self.assertIsNone(_first_name("1234567 Ontario Inc"))
+        self.assertIsNone(_first_name(""))
+        self.assertIsNone(_first_name("Acme Holdings LP"))
 
 
 class CompsBulletsTest(unittest.TestCase):
@@ -219,7 +219,8 @@ class EmailTemplatesTest(unittest.TestCase):
     def test_all_windows_render_without_ai_tells(self):
         bad = ["—", "happy to", "Happy to", "reach out", "no obligation",
                "No obligation", "What works", "Worth a", "I'd love",
-               "I hope this", "you're financing right now"]
+               "I hope this", "you're financing right now",
+               "Hi there"]
         for w in ("9_month", "6_month", "3_month"):
             for chargee in ("TD Bank", ""):
                 d = self._draft(window=w, chargee=chargee)
@@ -230,6 +231,35 @@ class EmailTemplatesTest(unittest.TestCase):
                 for phrase in bad:
                     self.assertNotIn(phrase, blob,
                         "%r in %s (chargee=%r)" % (phrase, w, chargee))
+
+    def test_lender_name_never_in_body(self):
+        d = self._draft(chargee="TD Bank")
+        s, b = _build_email(d, "Jake", "")
+        cs = _build_call_script(d, "Jake")
+        dm = _build_linkedin(d, "Jake")
+        for text in (b, cs, dm):
+            self.assertNotIn("TD Bank", text)
+            self.assertNotIn("charge", text.lower())
+        self.assertIn("your mortgage", b.lower())
+
+    def test_corp_owner_greeting_drops_name(self):
+        d = self._draft()
+        d["owner_name"] = "1234567 Ontario Inc"
+        _, b = _build_email(d, "Jake", "")
+        self.assertTrue(b.startswith("Hi,\n\n"))
+        self.assertNotIn("Hi there", b)
+        cs = _build_call_script(d, "Jake")
+        self.assertTrue(cs.startswith("Hi, this is"))
+        self.assertNotIn("Hi there", cs)
+        dm = _build_linkedin(d, "Jake")
+        self.assertTrue(dm.startswith("Hi, I was"))
+        self.assertNotIn("Hi there", dm)
+
+    def test_individual_owner_greeting_uses_first_name(self):
+        d = self._draft()
+        d["owner_name"] = "Sarah Mitchell"
+        _, b = _build_email(d, "Jake", "")
+        self.assertTrue(b.startswith("Hi Sarah,\n\n"))
 
     def test_subject_has_city(self):
         s, _ = _build_email(self._draft(), "Jake", "")

@@ -125,22 +125,29 @@ def _fmt_due_date(iso_date):
 
 
 def _first_name(full_name):
-    """Best-effort first name extraction from an owner's legal name."""
+    """Best-effort first name extraction from an owner's legal name.
+    Returns None if the owner is a corporate entity — callers should
+    drop the name from the greeting in that case.
+    """
     if not full_name:
-        return "there"
+        return None
     name = full_name.strip()
-    # Strip common corporate suffixes — if it's a numbered/corp, use generic
     upper = name.upper()
     corp_markers = (" INC", " LTD", " CORP", " LLC", " GP", " LP",
                     " HOLDINGS", " CAPITAL", " ONTARIO INC", " PROPERTIES")
     if any(m in upper for m in corp_markers) or name.split()[0].isdigit():
-        return "there"
-    # Take the first token with letters
+        return None
     parts = name.split()
     for p in parts:
         if p.replace(".", "").isalpha() and len(p) > 1:
             return p.title()
-    return "there"
+    return None
+
+
+def _greeting(full_name):
+    """Return the greeting line (with trailing comma)."""
+    first = _first_name(full_name)
+    return ("Hi %s," % first) if first else "Hi,"
 
 
 def _short_address(address, city):
@@ -330,60 +337,57 @@ def _subject_line(draft):
 
 
 def _build_email(draft, sender, comps_block=""):
-    first = _first_name(draft["owner_name"])
+    greeting = _greeting(draft["owner_name"])
     addr = _street_only(draft)
     city = _city_phrase(draft["city"])
     due = _fmt_due_date(draft["due_date"])
-    chargee_name = (draft["chargee"] or "").strip()
-    charge_lower = ("your %s charge" % chargee_name) if chargee_name else "your mortgage"
-    charge_upper = charge_lower[0].upper() + charge_lower[1:]
     window = draft["window"]
     subject = _subject_line(draft)
 
     if window == "9_month":
         body = (
-            "Hi %s,\n\n"
+            "%s\n\n"
             "I was pulling comps in %s for a client's deal and came "
             "across your acquisition of %s. I'm a multi-res lender "
-            "(CMHC and conventional). It looks like %s comes due "
-            "around %s, roughly 9 months out. My timing could be off "
-            "if you've already refinanced.\n\n"
+            "(CMHC and conventional). It looks like your mortgage "
+            "comes due around %s, roughly 9 months out. My timing "
+            "could be off if you've already refinanced.\n\n"
             "If not, I wanted to introduce myself early. When you "
             "get closer to maturity I'd be glad to quote the "
             "renewal, and I'm also open to looking at anything else "
             "you have in flight.\n\n"
             "%s"
-        ) % (first, city, addr, charge_lower, due, sender)
+        ) % (greeting, city, addr, due, sender)
 
     elif window == "6_month":
         body = (
-            "Hi %s,\n\n"
+            "%s\n\n"
             "I was pulling comps in %s for a client's file and your "
             "acquisition of %s came up. I do multi-res financing, "
-            "CMHC and conventional. %s looks like it matures around "
-            "%s, roughly 6 months out. Apologies in advance if "
-            "you've already renewed.\n\n"
+            "CMHC and conventional. Your mortgage looks like it "
+            "matures around %s, roughly 6 months out. Apologies in "
+            "advance if you've already renewed.\n\n"
             "If you're starting to look at options, I'd like to "
             "quote the refi. I'm also open to looking at anything "
             "else you have in flight. Would it make sense to connect "
             "this week?\n\n"
             "%s"
-        ) % (first, city, addr, charge_upper, due, sender)
+        ) % (greeting, city, addr, due, sender)
 
     else:  # 3_month
         body = (
-            "Hi %s,\n\n"
+            "%s\n\n"
             "I was running comps in %s for a client and came across "
-            "%s. I'm a multi-res lender. %s looks like it's due "
-            "around %s, roughly 90 days out. If you're already set "
-            "on the renewal, no need to respond.\n\n"
+            "%s. I'm a multi-res lender. Your mortgage looks like "
+            "it's due around %s, roughly 90 days out. If you're "
+            "already set on the renewal, no need to respond.\n\n"
             "If you're still looking, I can turn around terms "
             "quickly (CMHC or conventional, depending on what fits "
             "the asset). I'd also be glad to look at anything else "
             "you have in flight.\n\n"
             "Do you have time for a call this week?\n\n"
             "%s"
-        ) % (first, city, addr, charge_upper, due, sender)
+        ) % (greeting, city, addr, due, sender)
 
     if comps_block:
         body = body + "\n\n" + comps_block
@@ -396,18 +400,17 @@ def _build_call_script(draft, sender):
     addr = _street_only(draft)
     city = _city_phrase(draft["city"])
     due = _fmt_due_date(draft["due_date"])
-    chargee_name = (draft["chargee"] or "").strip()
-    charge_lower = ("your %s charge" % chargee_name) if chargee_name else "your mortgage"
     window = draft["window"]
 
+    opening_hi = ("Hi %s," % first) if first else "Hi,"
     opener = (
-        "Hi %s, this is %s. I do multi-res financing, CMHC and "
+        "%s this is %s. I do multi-res financing, CMHC and "
         "conventional. I was pulling comps in %s for a client's "
         "deal and your acquisition of %s came up. It looks like "
-        "%s comes due around %s, though my timing could be off. "
-        "Have you locked in the refi already, or are you still "
-        "looking at options?"
-        % (first, sender, city, addr, charge_lower, due)
+        "your mortgage comes due around %s, though my timing could "
+        "be off. Have you locked in the refi already, or are you "
+        "still looking at options?"
+        % (opening_hi, sender, city, addr, due)
     )
 
     if window == "9_month":
@@ -444,15 +447,16 @@ def _build_linkedin(draft, sender):
         "6_month": "6 months",
         "3_month": "90 days",
     }[draft["window"]]
+    opener = ("Hi %s, " % first) if first else "Hi, "
     return (
-        "Hi %s, I was pulling comps in %s for a client and came "
+        "%sI was pulling comps in %s for a client and came "
         "across %s. I'm a multi-res lender (CMHC and conventional). "
         "The mortgage looks like it comes up in about %s, though my "
         "info could be stale. If you're still looking at renewal "
         "or refi options I'd like to quote it, and I'm open to "
         "looking at anything else you have in flight. Would it "
         "make sense to connect?"
-    ) % (first, city, addr, window_phrase)
+    ) % (opener, city, addr, window_phrase)
 
 
 # ------------------------------ Core build ------------------------------
