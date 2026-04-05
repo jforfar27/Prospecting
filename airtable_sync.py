@@ -18,6 +18,7 @@ import os
 import sys
 import argparse
 import warnings
+import sqlite3
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -30,6 +31,7 @@ from config import (
     FIELD_CONVERTERS,
     SETUP_LINKED_RECORDS,
     OUTPUT_DIR,
+    DB_FILE,
 )
 
 AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
@@ -121,6 +123,144 @@ def upload_dataframe(df, config_key, property_id_map=None):
     print(f"  {table_name}: {upserted}/{total} records synced")
 
 
+def build_master_df():
+    """Build a flat denormalized DataFrame joining Property + Transaction + Parties + Charges."""
+    from type_converters import parse_currency, parse_date, parse_percent, parse_number, parse_checkbox
+
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query('''
+        SELECT
+            p.record_id       AS property_record_id,
+            p.address,
+            p.city,
+            p.region,
+            p.pin,
+            p.site_description,
+            t.sale_date,
+            t.purchase_price,
+            t.cash,
+            t.assumed_vbt_debt,
+            t.portfolio_flag,
+            transferor.legal_name   AS transferor,
+            transferor.phone        AS transferor_phone,
+            transferor.address      AS transferor_address,
+            transferor.city         AS transferor_city,
+            transferee.legal_name   AS transferee,
+            transferee.phone        AS transferee_phone,
+            transferee.address      AS transferee_address,
+            transferee.city         AS transferee_city,
+            pc.chargee             AS primary_chargee,
+            pc.principal           AS charge_principal,
+            pc.rate                AS charge_rate,
+            pc.due_date            AS charge_due_date,
+            pc.num_charges
+        FROM Property p
+        LEFT JOIN "Transaction" t
+            ON p.record_id = t.property_record_id
+        LEFT JOIN Parties transferor
+            ON p.record_id = transferor.property_record_id
+            AND transferor.party_role = 'Transferor'
+        LEFT JOIN Parties transferee
+            ON p.record_id = transferee.property_record_id
+            AND transferee.party_role = 'Transferee'
+        LEFT JOIN (
+            SELECT
+                property_record_id,
+                chargee,
+                principal,
+                rate,
+                due_date,
+                COUNT(*) OVER (PARTITION BY property_record_id) AS num_charges,
+                ROW_NUMBER() OVER (PARTITION BY property_record_id
+                                   ORDER BY ROWID) AS rn
+            FROM Charges
+        ) pc ON p.record_id = pc.property_record_id AND pc.rn = 1
+    ''', conn)
+
+    # Build a lookup from legal_name/spe → parent_company using contacts table
+    try:
+        contacts = pd.read_sql_query(
+            "SELECT parent_company, spe_names FROM contacts", conn
+        )
+        name_to_parent = {}
+        for _, c in contacts.iterrows():
+            name_to_parent[c["parent_company"]] = c["parent_company"]
+            if c["spe_names"]:
+                for spe in str(c["spe_names"]).split("; "):
+                    spe = spe.strip()
+                    if spe:
+                        name_to_parent[spe] = c["parent_company"]
+    except Exception:
+        name_to_parent = {}
+
+    conn.close()
+
+    # Resolve buyer_parent and seller_parent using the lookup
+    if name_to_parent:
+        df["buyer_parent"] = df["transferee"].map(
+            lambda x: name_to_parent.get(x, x) if pd.notna(x) and x else ""
+        )
+        df["seller_parent"] = df["transferor"].map(
+            lambda x: name_to_parent.get(x, x) if pd.notna(x) and x else ""
+        )
+
+    # Apply type converters matching Master table field types
+    converters = {
+        "sale_date": parse_date,
+        "purchase_price": parse_currency,
+        "cash": parse_currency,
+        "assumed_vbt_debt": parse_currency,
+        "portfolio_flag": parse_checkbox,
+        "charge_principal": parse_currency,
+        "charge_rate": lambda v: str(v) if v and not pd.isna(v) else None,
+        "charge_due_date": parse_date,
+        "num_charges": parse_number,
+    }
+
+    records = []
+    for _, row in df.iterrows():
+        fields = {}
+        for col, val in row.items():
+            if col in converters:
+                converted = converters[col](val)
+                if converted is not None:
+                    fields[col] = converted
+            else:
+                str_val = "" if pd.isna(val) else str(val)
+                if str_val:
+                    fields[col] = str_val
+        records.append({"fields": fields})
+
+    return records
+
+
+def sync_master():
+    """Sync the flat Master table from SQLite joined data."""
+    table_name = AIRTABLE_TABLE_NAMES["master"]
+    table = get_table(table_name)
+    records = build_master_df()
+    total = len(records)
+    upserted = 0
+    chunk_size = 10
+
+    print(f"  Syncing Master table ({total} flat records)...")
+    for i in range(0, total, chunk_size):
+        chunk = records[i:i + chunk_size]
+        try:
+            table.batch_upsert(
+                chunk,
+                key_fields=["property_record_id"],
+                replace=False,  # Preserve CRM-only fields (status, priority, notes)
+            )
+            upserted += len(chunk)
+            print(f"  Master: {upserted}/{total} records synced", end="\r", flush=True)
+        except Exception as e:
+            print(f"\n  Error uploading to Master (batch {i // chunk_size + 1}): {e}")
+
+    print(f"  Master: {upserted}/{total} records synced")
+    return upserted == total
+
+
 def sync_all(output_dir=None):
     """Sync all CSV files from output directory to Airtable."""
     if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
@@ -173,6 +313,14 @@ def sync_all(output_dir=None):
         except Exception as e:
             print(f"  Error processing {csv_file}: {e}")
             success = False
+
+    # Sync Master table (flat denormalized view)
+    try:
+        if not sync_master():
+            success = False
+    except Exception as e:
+        print(f"  Error syncing Master table: {e}")
+        success = False
 
     status = "complete" if success else "completed with errors"
     print(f"Airtable sync {status}!")

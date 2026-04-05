@@ -177,6 +177,55 @@ def step_sync(logger):
         return False, str(e), elapsed
 
 
+def step_entity_resolution(logger):
+    """Resolve SPE party names to parent companies and sync to Airtable."""
+    logger.info("Starting entity resolution...")
+    start = time.time()
+    try:
+        from entity_resolver import resolve_all, sync_contacts_to_airtable
+        import sqlite3
+        resolve_all()
+        conn = sqlite3.connect(config.DB_FILE)
+        sync_contacts_to_airtable(conn)
+        conn.close()
+        elapsed = time.time() - start
+        return True, "Contacts resolved + synced", elapsed
+    except Exception as e:
+        elapsed = time.time() - start
+        return False, str(e), elapsed
+
+
+def step_charge_maturity(logger):
+    """Run charge maturity report and sync to Airtable."""
+    logger.info("Starting charge maturity pipeline...")
+    start = time.time()
+    try:
+        from charge_maturity import build_maturity_report, print_summary, export_csv, sync_to_airtable
+        records = build_maturity_report()
+        print_summary(records)
+        export_csv(records)
+        sync_to_airtable(records)
+        elapsed = time.time() - start
+        return True, f"{len(records)} maturing charges synced", elapsed
+    except Exception as e:
+        elapsed = time.time() - start
+        return False, str(e), elapsed
+
+
+def step_maturity_alerts(logger):
+    """Check for new 0-3 month maturities and send alerts."""
+    logger.info("Checking for new maturity alerts...")
+    start = time.time()
+    try:
+        from charge_maturity import alert_new_maturities
+        count = alert_new_maturities()
+        elapsed = time.time() - start
+        return True, f"{count} new alerts sent", elapsed
+    except Exception as e:
+        elapsed = time.time() - start
+        return False, str(e), elapsed
+
+
 def step_cleanup_logs(logger, keep_days=30):
     """Remove log files older than keep_days."""
     cutoff = datetime.now() - timedelta(days=keep_days)
@@ -426,7 +475,8 @@ Examples:
 
     # Pass-through scraper args
     parser.add_argument("--headless", action="store_true", help="Run Chrome in headless mode")
-    parser.add_argument("--resume", action="store_true", help="Resume from last scraped record")
+    parser.add_argument("--resume", action="store_true", default=True, help="Resume from last scraped record (default: on)")
+    parser.add_argument("--no-resume", dest="resume", action="store_false", help="Scrape all records from scratch")
     parser.add_argument("--type", dest="property_type", help="Override property type")
     parser.add_argument("--min-amount", help="Override minimum sale amount")
     parser.add_argument("--start-year", help="Override start year")
@@ -467,7 +517,22 @@ def run_pipeline(args):
             ok, details, elapsed = step_sync(logger)
             result.record_step("Airtable Sync", ok, details, elapsed)
 
-        # Step 4: Cleanup old logs
+        # Step 4: Entity Resolution + Contacts sync
+        if not args.scrape_only:
+            ok, details, elapsed = step_entity_resolution(logger)
+            result.record_step("Entity Resolution", ok, details, elapsed)
+
+        # Step 5: Charge Maturity report + Airtable sync
+        if not args.scrape_only:
+            ok, details, elapsed = step_charge_maturity(logger)
+            result.record_step("Charge Maturity", ok, details, elapsed)
+
+        # Step 6: Maturity alerts (0-3 month notifications)
+        if not args.scrape_only:
+            ok, details, elapsed = step_maturity_alerts(logger)
+            result.record_step("Maturity Alerts", ok, details, elapsed)
+
+        # Step 7: Cleanup old logs
         step_cleanup_logs(logger)
 
     except KeyboardInterrupt:

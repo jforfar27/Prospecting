@@ -39,7 +39,10 @@ def launch_chrome_driver(proxy_server=None, headless=False):
             print(e)
         finally:
             counter_selenium += 1
-    driver.maximize_window()
+    try:
+        driver.maximize_window()
+    except Exception:
+        pass  # --start-maximized handles this; can fail in headless
     driver.get("https://google.com/ncr")
     return driver
 
