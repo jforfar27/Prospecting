@@ -107,14 +107,21 @@ def _fmt_currency(v):
         return "n/a"
 
 
-def _fmt_percent(v):
-    """parse_percent returns a decimal (0.0425 for 4.25%), so multiply by 100."""
-    if v is None:
-        return "n/a"
+def _fmt_due_date(iso_date):
+    """Turn 'YYYY-MM-DD' into a human phrase like 'mid-July 2026'."""
+    if not iso_date:
+        return "the upcoming maturity"
     try:
-        return "{:.2f}%".format(float(v) * 100.0)
+        d = datetime.strptime(iso_date, "%Y-%m-%d").date()
     except (ValueError, TypeError):
-        return "n/a"
+        return iso_date
+    if d.day <= 10:
+        prefix = "early "
+    elif d.day >= 21:
+        prefix = "late "
+    else:
+        prefix = "mid-"
+    return "%s%s" % (prefix, d.strftime("%B %Y"))
 
 
 def _first_name(full_name):
@@ -147,22 +154,23 @@ def _city_phrase(city):
 
 # ------------------------------ Comps ------------------------------
 
-def _fetch_comps(conn, target_city, target_region, exclude_record_id, limit=3):
+def _fetch_comps(conn, target_city, target_region, exclude_record_id=None, limit=3):
     """Return up to `limit` recent multi-res sale comps. Same-city matches
-    rank first, then same-region fallback. Excludes the target property
-    and portfolio flags. Requires unit_count and purchase_price populated.
+    rank first, then same-region fallback. Portfolio flags excluded.
+    Requires unit_count and purchase_price populated. If
+    `exclude_record_id` is None, caller is expected to filter out the
+    target property from the result.
     """
     target_city = (target_city or "").strip()
     target_region = (target_region or "").strip()
     if not target_city and not target_region:
         return []
     sql = """
-        SELECT p.address, p.city, p.region, p.unit_count,
+        SELECT p.record_id, p.address, p.city, p.region, p.unit_count,
                t.sale_date, t.purchase_price, p.price_per_unit
         FROM Property p
         JOIN "Transaction" t ON p.record_id = t.property_record_id
-        WHERE p.record_id != :exclude_id
-          AND t.sale_date IS NOT NULL
+        WHERE t.sale_date IS NOT NULL
           AND t.sale_date >= DATE('now', '-36 months')
           AND (t.portfolio_flag IS NULL
                OR LOWER(TRIM(t.portfolio_flag))
@@ -180,13 +188,14 @@ def _fetch_comps(conn, target_city, target_region, exclude_record_id, limit=3):
         LIMIT :lim
     """
     rows = conn.execute(sql, {
-        "exclude_id": exclude_record_id or "",
         "target_city": target_city.lower(),
         "target_region": target_region.lower(),
         "lim": limit,
     }).fetchall()
     comps = []
     for r in rows:
+        if exclude_record_id and r["record_id"] == exclude_record_id:
+            continue
         try:
             units = int(r["unit_count"])
         except (ValueError, TypeError):
@@ -205,6 +214,7 @@ def _fetch_comps(conn, target_city, target_region, exclude_record_id, limit=3):
         except (ValueError, TypeError):
             ppu = price / units
         comps.append({
+            "_record_id": r["record_id"],
             "address": (r["address"] or "").strip(),
             "city": (r["city"] or "").strip(),
             "region": (r["region"] or "").strip(),
@@ -216,10 +226,15 @@ def _fetch_comps(conn, target_city, target_region, exclude_record_id, limit=3):
     return comps
 
 
-def _fmt_sold(sale_date):
+def _fmt_sold_month(sale_date):
+    """Turn 'YYYY-MM-DD' into 'Nov 2025'."""
     if not sale_date:
         return ""
-    return sale_date[:7]
+    try:
+        d = datetime.strptime(sale_date[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return sale_date[:7]
+    return d.strftime("%b %Y")
 
 
 def _fmt_price_short(v):
@@ -234,60 +249,71 @@ def _fmt_price_short(v):
     return "$%.0f" % f
 
 
-def _truncate(s, width):
-    s = s or ""
-    if len(s) <= width:
-        return s
-    if width <= 1:
-        return s[:width]
-    return s[: width - 1] + "."
+def _months_between(sale_date, today):
+    try:
+        d = datetime.strptime(sale_date[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+    return (today.year - d.year) * 12 + (today.month - d.month)
 
 
-def _format_comps_table(comps, target_city):
-    """Render comps as a fixed-width plain-text table. Returns '' if
-    fewer than 2 comps are available.
+def _format_comps_bullets(comps, target_city, today=None):
+    """Render comps as a per-line bullet list. One line per comp with
+    address, location, units, sold date, $/unit, and total price. Works
+    in proportional-font email clients (no alignment needed). Returns
+    '' if fewer than 2 comps are available.
     """
     if not comps or len(comps) < 2:
         return ""
+    if today is None:
+        today = date.today()
     target_city_l = (target_city or "").strip().lower()
-    headers = ["Address", "Sold", "Units", "Price", "$/Unit", "Area"]
-    widths = [20, 7, 5, 8, 8, 14]
-    rendered = []
+
+    any_region_fallback = False
+    ages = []
+    lines_items = []
     for c in comps:
         if c["city"] and c["city"].strip().lower() == target_city_l:
             area = c["city"]
         elif c["region"]:
             area = c["region"]
+            any_region_fallback = True
         else:
             area = c["city"] or ""
-        rendered.append([
-            _truncate(c["address"], widths[0]),
-            _fmt_sold(c["sale_date"]),
-            str(c["units"]),
-            _fmt_price_short(c["price"]),
-            _fmt_price_short(c["ppu"]),
-            _truncate(area, widths[5]),
-        ])
 
-    def fmt_row(cells):
-        out = []
-        for i, cell in enumerate(cells):
-            if i in (0, 5):
-                out.append(cell.ljust(widths[i]))
-            else:
-                out.append(cell.rjust(widths[i]))
-        return "  " + "  ".join(out)
+        addr = c["address"] or "a property"
+        loc = ("%s, %s" % (addr, area)) if area else addr
 
-    sep = ["-" * w for w in widths]
-    lines = [
-        "Recent comps in the area:",
-        "",
-        fmt_row(headers),
-        fmt_row(sep),
-    ]
-    for r in rendered:
-        lines.append(fmt_row(r))
-    return "\n".join(lines)
+        parts = ["%d units" % c["units"]]
+        sold = _fmt_sold_month(c["sale_date"])
+        if sold:
+            parts.append("sold " + sold)
+        parts.append(_fmt_price_short(c["ppu"]) + "/unit")
+        tail = " (%s)" % _fmt_price_short(c["price"])
+
+        lines_items.append("  - %s: %s%s" % (loc, ", ".join(parts), tail))
+
+        m = _months_between(c["sale_date"], today)
+        if m is not None:
+            ages.append(m)
+
+    # Staleness qualifier if median comp is > 12 months old.
+    stale = False
+    if ages:
+        ages_sorted = sorted(ages)
+        median_age = ages_sorted[len(ages_sorted) // 2]
+        stale = median_age > 12
+
+    header_city = (target_city or "").strip()
+    if stale:
+        where = ("in %s" % header_city) if (header_city and not any_region_fallback) else "nearby"
+        header = "Sales %s over the past 3 years:" % where
+    elif header_city and not any_region_fallback:
+        header = "Recent sales in %s:" % header_city
+    else:
+        header = "Recent sales nearby:"
+
+    return "\n".join([header] + lines_items)
 
 
 # ------------------------------ Templates ------------------------------
@@ -297,18 +323,24 @@ def _street_only(draft):
     return s or _short_address(draft["address"], draft["city"])
 
 
-def _build_email(draft, sender, comps_table=""):
+def _subject_line(draft):
+    addr = _street_only(draft)
+    city = (draft["city"] or "").strip()
+    return ("%s, %s" % (addr, city)) if city else addr
+
+
+def _build_email(draft, sender, comps_block=""):
     first = _first_name(draft["owner_name"])
     addr = _street_only(draft)
     city = _city_phrase(draft["city"])
-    due = draft["due_date"] or "the upcoming maturity"
+    due = _fmt_due_date(draft["due_date"])
     chargee_name = (draft["chargee"] or "").strip()
     charge_lower = ("your %s charge" % chargee_name) if chargee_name else "your mortgage"
     charge_upper = charge_lower[0].upper() + charge_lower[1:]
     window = draft["window"]
+    subject = _subject_line(draft)
 
     if window == "9_month":
-        subject = addr
         body = (
             "Hi %s,\n\n"
             "I was pulling comps in %s for a client's deal and came "
@@ -324,7 +356,6 @@ def _build_email(draft, sender, comps_table=""):
         ) % (first, city, addr, charge_lower, due, sender)
 
     elif window == "6_month":
-        subject = addr
         body = (
             "Hi %s,\n\n"
             "I was pulling comps in %s for a client's file and your "
@@ -333,14 +364,13 @@ def _build_email(draft, sender, comps_table=""):
             "%s, roughly 6 months out. Apologies in advance if "
             "you've already renewed.\n\n"
             "If you're starting to look at options, I'd like to "
-            "quote the refi. I'm also open to looking at "
-            "acquisitions or other assets you're financing right "
-            "now. Would it make sense to connect this week?\n\n"
+            "quote the refi. I'm also open to looking at anything "
+            "else you have in flight. Would it make sense to connect "
+            "this week?\n\n"
             "%s"
         ) % (first, city, addr, charge_upper, due, sender)
 
     else:  # 3_month
-        subject = addr
         body = (
             "Hi %s,\n\n"
             "I was running comps in %s for a client and came across "
@@ -355,8 +385,8 @@ def _build_email(draft, sender, comps_table=""):
             "%s"
         ) % (first, city, addr, charge_upper, due, sender)
 
-    if comps_table:
-        body = body + "\n\n" + comps_table
+    if comps_block:
+        body = body + "\n\n" + comps_block
 
     return subject, body
 
@@ -365,7 +395,7 @@ def _build_call_script(draft, sender):
     first = _first_name(draft["owner_name"])
     addr = _street_only(draft)
     city = _city_phrase(draft["city"])
-    due = draft["due_date"] or "the upcoming maturity"
+    due = _fmt_due_date(draft["due_date"])
     chargee_name = (draft["chargee"] or "").strip()
     charge_lower = ("your %s charge" % chargee_name) if chargee_name else "your mortgage"
     window = draft["window"]
@@ -440,6 +470,7 @@ def build_drafts(force_regenerate=False, min_principal=None, sender=None):
     _ensure_outreach_log(conn)
     already = set() if force_regenerate else _already_generated(conn)
 
+    comps_cache = {}
     drafts = []
     for row in rows:
         due = parse_due_date(row["due_date"])
@@ -474,20 +505,32 @@ def build_drafts(force_regenerate=False, min_principal=None, sender=None):
             "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
             "status": "queued",
         }
-        comps = _fetch_comps(
-            conn,
-            draft["city"],
-            draft["region"],
-            draft["property_record_id"],
-            limit=3,
+        # Pull one extra comp so we can always drop the target property
+        # from the cached list. The cache is keyed by (city, region) so
+        # properties in the same area share a single query.
+        cache_key = (
+            (draft["city"] or "").strip().lower(),
+            (draft["region"] or "").strip().lower(),
         )
-        comps_table = _format_comps_table(comps, draft["city"])
-        subject, body = _build_email(draft, sender, comps_table=comps_table)
+        if cache_key not in comps_cache:
+            comps_cache[cache_key] = _fetch_comps(
+                conn,
+                draft["city"],
+                draft["region"],
+                exclude_record_id=None,
+                limit=4,
+            )
+        comps = [
+            c for c in comps_cache[cache_key]
+            if c.get("_record_id") != draft["property_record_id"]
+        ][:3]
+        comps_block = _format_comps_bullets(comps, draft["city"], today=today)
+        subject, body = _build_email(draft, sender, comps_block=comps_block)
         draft["email_subject"] = subject
         draft["email_body"] = body
         draft["call_script"] = _build_call_script(draft, sender)
         draft["linkedin_message"] = _build_linkedin(draft, sender)
-        draft["comps_count"] = len(comps) if comps_table else 0
+        draft["comps_count"] = len(comps) if comps_block else 0
         drafts.append(draft)
 
     conn.close()
