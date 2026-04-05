@@ -142,8 +142,43 @@ TABLE_SCHEMAS = {
     ],
 }
 
+TABLE_SCHEMAS["Outreach"] = [
+    {"name": "outreach_id", "type": "singleLineText"},
+    {"name": "window", "type": "singleSelect", "options": {
+        "choices": [
+            {"name": "9 months out"},
+            {"name": "6 months out"},
+            {"name": "3 months out"},
+        ]
+    }},
+    {"name": "status", "type": "singleSelect", "options": {
+        "choices": [
+            {"name": "Queued"},
+            {"name": "Sent"},
+            {"name": "Replied"},
+            {"name": "Meeting Booked"},
+            {"name": "Not Interested"},
+            {"name": "Skip"},
+        ]
+    }},
+    {"name": "due_date", "type": "date", "options": {"dateFormat": {"name": "iso"}}},
+    {"name": "address", "type": "singleLineText"},
+    {"name": "city", "type": "singleLineText"},
+    {"name": "region", "type": "singleLineText"},
+    {"name": "owner_name", "type": "singleLineText"},
+    {"name": "owner_phone", "type": "phoneNumber"},
+    {"name": "chargee", "type": "singleLineText"},
+    {"name": "principal", "type": "currency", "options": {"precision": 0, "symbol": "$"}},
+    {"name": "rate", "type": "percent", "options": {"precision": 2}},
+    {"name": "email_subject", "type": "singleLineText"},
+    {"name": "email_body", "type": "multilineText"},
+    {"name": "call_script", "type": "multilineText"},
+    {"name": "linkedin_message", "type": "multilineText"},
+    {"name": "property_record_id", "type": "singleLineText"},
+]
+
 # Order matters: Properties must be created first for linked records
-TABLE_CREATE_ORDER = ["Properties", "Transactions", "Charges", "Parties"]
+TABLE_CREATE_ORDER = ["Properties", "Transactions", "Charges", "Parties", "Outreach"]
 
 
 def setup_tables():

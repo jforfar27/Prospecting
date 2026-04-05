@@ -212,6 +212,26 @@ def step_charge_maturity(logger):
         return False, str(e), elapsed
 
 
+def step_outreach(logger):
+    """Generate outreach drafts for upcoming maturities and sync to Airtable."""
+    logger.info("Generating outreach drafts...")
+    start = time.time()
+    try:
+        from outreach import build_drafts, export_csv, sync_to_airtable, mark_generated
+        drafts = build_drafts()
+        if not drafts:
+            elapsed = time.time() - start
+            return True, "No new outreach drafts needed", elapsed
+        export_csv(drafts)
+        sync_to_airtable(drafts)
+        mark_generated(drafts)
+        elapsed = time.time() - start
+        return True, f"{len(drafts)} outreach drafts generated", elapsed
+    except Exception as e:
+        elapsed = time.time() - start
+        return False, str(e), elapsed
+
+
 def step_maturity_alerts(logger):
     """Check for new 0-3 month maturities and send alerts."""
     logger.info("Checking for new maturity alerts...")
@@ -532,7 +552,12 @@ def run_pipeline(args):
             ok, details, elapsed = step_maturity_alerts(logger)
             result.record_step("Maturity Alerts", ok, details, elapsed)
 
-        # Step 7: Cleanup old logs
+        # Step 7: Outreach cadence generator (9/6/3-month drafts)
+        if not args.scrape_only:
+            ok, details, elapsed = step_outreach(logger)
+            result.record_step("Outreach Drafts", ok, details, elapsed)
+
+        # Step 8: Cleanup old logs
         step_cleanup_logs(logger)
 
     except KeyboardInterrupt:

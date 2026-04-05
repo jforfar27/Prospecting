@@ -115,3 +115,9 @@ MATURITY_ALERT_CONFIG = {
     "alert_bucket": "0-3 months",
     "min_alert_principal": 100000,  # only alert on charges >= $100K
 }
+
+# --- Outreach Cadence Generator Configuration ---
+OUTREACH_CONFIG = {
+    "sender_name": os.getenv("OUTREACH_SENDER_NAME", "the team"),
+    "min_principal": 500000,  # only generate outreach for charges >= $500K
+}
